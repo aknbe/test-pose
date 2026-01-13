@@ -1,6 +1,46 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MediaPipe 3D Pose Viewer</title>
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #000;
+      color: #0f0;
+      font-family: monospace;
+    }
+
+    #output {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+
+    #debug {
+      position: fixed;
+      top: 0;
+      left: 0;
+      padding: 8px;
+      background: rgba(0,0,0,0.5);
+      color: #0f0;
+      font-size: 12px;
+      white-space: pre-line;
+      z-index: 10;
+      max-width: 60vw;
+    }
+  </style>
+</head>
+
 <body>
+  <div id="debug">Loading...</div>
   <video id="video" autoplay playsinline style="display:none"></video>
   <canvas id="output"></canvas>
 
   <script type="module" src="app.js"></script>
 </body>
+</html>
