@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MediaPipe 3D Pose Viewer</title>
+  <title>3D Kick Analyzer</title>
 
   <style>
     html, body {
@@ -33,14 +33,25 @@
       z-index: 10;
       max-width: 60vw;
     }
+
+    #fileInput {
+      position: fixed;
+      top: 0;
+      right: 0;
+      z-index: 20;
+    }
   </style>
 </head>
 
 <body>
   <div id="debug">Loading...</div>
-  <video id="video" autoplay playsinline style="display:none"></video>
+
+  <input id="fileInput" type="file" accept="video/*" />
+
+  <video id="video" playsinline style="display:none"></video>
   <canvas id="output"></canvas>
 
   <script type="module" src="app.js"></script>
 </body>
 </html>
+
