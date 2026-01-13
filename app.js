@@ -1,8 +1,9 @@
 console.log("app.js is running!");
 import {
   PoseLandmarker,
-  FilesetResolver
-} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest";
+  FilesetResolver,
+  DrawingUtils
+} from "https://cdn.skypack.dev/@mediapipe/tasks-vision@0.10.0";
 
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js";
 import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160/examples/jsm/controls/OrbitControls.js";
@@ -240,4 +241,5 @@ function renderLoop() {
     renderLoop();
   });
 })();
+
 
