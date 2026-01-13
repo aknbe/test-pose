@@ -5,14 +5,20 @@ import {
 
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js";
 
+const debug = document.getElementById("debug");
+function log(msg) {
+  debug.textContent = msg;
+  console.log(msg);
+}
+
 let video = document.getElementById("video");
 let canvas = document.getElementById("output");
 let renderer, scene, camera, skeletonLines = [];
 let landmarker;
 
-// -----------------------------
-// 1. Three.js の初期化
-// -----------------------------
+// --------------------------------------------------
+// Three.js 初期化
+// --------------------------------------------------
 function initThree() {
   renderer = new THREE.WebGLRenderer({ canvas });
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -26,10 +32,10 @@ function initThree() {
     0.1,
     1000
   );
-  camera.position.set(0, 0, 3);
+  camera.position.set(0, 0, 1.2);
 
-  // 骨格ライン（33点 → 32本）
   const material = new THREE.LineBasicMaterial({ color: 0x00ffcc });
+
   for (let i = 0; i < 32; i++) {
     const geometry = new THREE.BufferGeometry().setFromPoints([
       new THREE.Vector3(),
@@ -39,12 +45,16 @@ function initThree() {
     scene.add(line);
     skeletonLines.push(line);
   }
+
+  log("Three.js initialized");
 }
 
-// -----------------------------
-// 2. MediaPipe Pose の初期化
-// -----------------------------
+// --------------------------------------------------
+// MediaPipe Pose 初期化
+// --------------------------------------------------
 async function initPose() {
+  log("Loading MediaPipe model...");
+
   const vision = await FilesetResolver.forVisionTasks(
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
   );
@@ -57,38 +67,50 @@ async function initPose() {
     runningMode: "VIDEO",
     numPoses: 1
   });
+
+  log("MediaPipe Pose loaded");
 }
 
-// -----------------------------
-// 3. カメラ起動
-// -----------------------------
+// --------------------------------------------------
+// カメラ起動
+// --------------------------------------------------
 async function initCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: "environment" }
-  });
-  video.srcObject = stream;
+  log("Requesting camera access...");
 
-  return new Promise(resolve => {
-    video.onloadedmetadata = () => resolve();
-  });
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" } }
+    });
+
+    video.srcObject = stream;
+
+    return new Promise(resolve => {
+      video.onloadedmetadata = () => {
+        log("Camera ready");
+        resolve();
+      };
+    });
+  } catch (e) {
+    log("Camera error: " + e.message);
+  }
 }
 
-// -----------------------------
-// 4. 骨格ラインの接続定義（MediaPipeの33点）
-// -----------------------------
+// --------------------------------------------------
+// MediaPipe の骨格接続
+// --------------------------------------------------
 const connections = [
-  [11, 13], [13, 15], // 左腕
-  [12, 14], [14, 16], // 右腕
-  [11, 12],           // 肩
-  [23, 24],           // 腰
-  [11, 23], [12, 24], // 体幹
-  [23, 25], [25, 27], [27, 29], // 左脚
-  [24, 26], [26, 28], [28, 30]  // 右脚
+  [11, 13], [13, 15],
+  [12, 14], [14, 16],
+  [11, 12],
+  [23, 24],
+  [11, 23], [12, 24],
+  [23, 25], [25, 27], [27, 29],
+  [24, 26], [26, 28], [28, 30]
 ];
 
-// -----------------------------
-// 5. メインループ（推論＋描画）
-// -----------------------------
+// --------------------------------------------------
+// メインループ
+// --------------------------------------------------
 function renderLoop() {
   if (landmarker && video.readyState >= 2) {
     const result = landmarker.detectForVideo(video, performance.now());
@@ -102,29 +124,39 @@ function renderLoop() {
         const p2 = lm[b];
 
         const line = skeletonLines[i];
-        const positions = line.geometry.attributes.position.array;
+        const pos = line.geometry.attributes.position.array;
 
-        positions[0] = p1.x - 0.5;
-        positions[1] = -p1.y + 0.5;
-        positions[2] = -p1.z;
+        pos[0] = p1.x - 0.5;
+        pos[1] = -p1.y + 0.5;
+        pos[2] = -p1.z;
 
-        positions[3] = p2.x - 0.5;
-        positions[4] = -p2.y + 0.5;
-        positions[5] = -p2.z;
+        pos[3] = p2.x - 0.5;
+        pos[4] = -p2.y + 0.5;
+        pos[5] = -p2.z;
 
         line.geometry.attributes.position.needsUpdate = true;
       });
+
+      debug.textContent =
+        `FPS: ${Math.round(1000 / (performance.now() - lastTime))}\n` +
+        `Landmarks detected: YES`;
+    } else {
+      debug.textContent = "Landmarks detected: NO";
     }
   }
 
   renderer.render(scene, camera);
+  lastTime = performance.now();
   requestAnimationFrame(renderLoop);
 }
 
-// -----------------------------
-// 6. 実行
-// -----------------------------
+let lastTime = performance.now();
+
+// --------------------------------------------------
+// 実行
+// --------------------------------------------------
 (async () => {
+  log("Starting...");
   await initCamera();
   await initPose();
   initThree();
