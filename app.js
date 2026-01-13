@@ -6,8 +6,9 @@ import {
 } from "https://cdn.skypack.dev/@mediapipe/tasks-vision@0.10.0";
 
 import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 // import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js";
-import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160/examples/jsm/controls/OrbitControls.js";
+// import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160/examples/jsm/controls/OrbitControls.js";
 
 const debug = document.getElementById("debug");
 function log(msg) {
@@ -242,6 +243,7 @@ function renderLoop() {
     renderLoop();
   });
 })();
+
 
 
 
