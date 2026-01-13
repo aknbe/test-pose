@@ -1,14 +1,14 @@
-console.log("app.js is running!");
 import {
   PoseLandmarker,
   FilesetResolver,
   DrawingUtils
 } from "https://cdn.skypack.dev/@mediapipe/tasks-vision@0.10.0";
 
+// import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.182/build/three.module.js";
+// import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.182/examples/jsm/controls/OrbitControls.js";
+
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-// import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js";
-// import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160/examples/jsm/controls/OrbitControls.js";
 
 const debug = document.getElementById("debug");
 function log(msg) {
@@ -20,7 +20,9 @@ let video = document.getElementById("video");
 let canvas = document.getElementById("output");
 let renderer, scene, camera, controls;
 let skeletonLines = [];
-let landmarker;
+let landmarker = undefined;
+//let landmarker: PoseLandmarker = undefined;
+
 
 let lastFootPos = null;
 let lastTime = null;
@@ -81,13 +83,14 @@ async function initPose() {
   log("Loading MediaPipe model...");
 
   const vision = await FilesetResolver.forVisionTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
   );
 
   landmarker = await PoseLandmarker.createFromOptions(vision, {
     baseOptions: {
       modelAssetPath:
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/pose_landmarker_lite.task"
+        `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task`,
+      delegate: "GPU"
     },
     runningMode: "VIDEO",
     numPoses: 1
@@ -243,7 +246,3 @@ function renderLoop() {
     renderLoop();
   });
 })();
-
-
-
-
