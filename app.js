@@ -4,9 +4,6 @@ import {
   DrawingUtils
 } from "https://cdn.skypack.dev/@mediapipe/tasks-vision@0.10.0";
 
-// import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.182/build/three.module.js";
-// import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.182/examples/jsm/controls/OrbitControls.js";
-
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
@@ -18,11 +15,12 @@ function log(msg) {
 
 let video = document.getElementById("video");
 let canvas = document.getElementById("output");
+let seek = document.getElementById("seek");
+let speed = document.getElementById("speed");
+
 let renderer, scene, camera, controls;
 let skeletonLines = [];
-let landmarker = undefined;
-//let landmarker: PoseLandmarker = undefined;
-
+let landmarker;
 
 let lastFootPos = null;
 let lastTime = null;
@@ -34,14 +32,14 @@ let trailLine;
 // --------------------------------------------------
 function initThree() {
   renderer = new THREE.WebGLRenderer({ canvas });
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(canvas.clientWidth, canvas.clientHeight);
 
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x111111);
 
   camera = new THREE.PerspectiveCamera(
     45,
-    window.innerWidth / window.innerHeight,
+    canvas.clientWidth / canvas.clientHeight,
     0.1,
     1000
   );
@@ -50,17 +48,34 @@ function initThree() {
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
 
-  const material = new THREE.LineBasicMaterial({ color: 0x00ffcc });
+  const leftColor = 0x00ccff;
+  const rightColor = 0xff8800;
 
-  for (let i = 0; i < 32; i++) {
+  const leftIndices = [11,13,15,23,25,27,29];
+
+  const connections = [
+    [11, 13], [13, 15],
+    [12, 14], [14, 16],
+    [11, 12],
+    [23, 24],
+    [11, 23], [12, 24],
+    [23, 25], [25, 27], [27, 29],
+    [24, 26], [26, 28], [28, 30]
+  ];
+
+  connections.forEach(([a, b]) => {
+    const color = leftIndices.includes(a) ? leftColor : rightColor;
+    const material = new THREE.LineBasicMaterial({ color });
+
     const geometry = new THREE.BufferGeometry().setFromPoints([
       new THREE.Vector3(),
       new THREE.Vector3()
     ]);
+
     const line = new THREE.Line(geometry, material);
     scene.add(line);
     skeletonLines.push(line);
-  }
+  });
 
   const trailGeometry = new THREE.BufferGeometry();
   trailGeometry.setAttribute(
@@ -112,7 +127,9 @@ document.getElementById("fileInput").addEventListener("change", e => {
   log("Video loaded: " + file.name);
 
   video.onloadeddata = () => {
-    log("Video ready. Tap screen to start.");
+    seek.max = Math.floor(video.duration * 1000);
+
+    log("Video ready. Tap to start.");
 
     document.body.addEventListener("click", () => {
       video.play();
@@ -121,38 +138,17 @@ document.getElementById("fileInput").addEventListener("change", e => {
   };
 });
 
-video.addEventListener("loadeddata", () => {
-  log("Video ready. Tap screen to start.");
-  // タップイベントを強制的にトリガーするための補助関数を追加
-  const startVideo = () => {
-    video.play().catch(e => {
-      console.error("Error playing video:", e);
-      log("Error playing video. Please try again.");
-    });
-    log("Video playing");
-  };
-
-  // タップイベントを登録
-  document.body.addEventListener("click", startVideo, { once: true });
-
-  // タップイベントが動作しない場合、自動再生を試みる
-  setTimeout(() => {
-    startVideo();
-  }, 1000);
+// --------------------------------------------------
+// 再生位置スライダー
+// --------------------------------------------------
+seek.addEventListener("input", () => {
+  video.currentTime = seek.value / 1000;
 });
 
-// --------------------------------------------------
-// 骨格接続
-// --------------------------------------------------
-const connections = [
-  [11, 13], [13, 15],
-  [12, 14], [14, 16],
-  [11, 12],
-  [23, 24],
-  [11, 23], [12, 24],
-  [23, 25], [25, 27], [27, 29],
-  [24, 26], [26, 28], [28, 30]
-];
+// 再生速度スライダー
+speed.addEventListener("input", () => {
+  video.playbackRate = parseFloat(speed.value);
+});
 
 // --------------------------------------------------
 // メインループ
@@ -166,6 +162,16 @@ function renderLoop() {
 
     if (result.landmarks && result.landmarks[0]) {
       const lm = result.landmarks[0];
+
+      const connections = [
+        [11, 13], [13, 15],
+        [12, 14], [14, 16],
+        [11, 12],
+        [23, 24],
+        [11, 23], [12, 24],
+        [23, 25], [25, 27], [27, 29],
+        [24, 26], [26, 28], [28, 30]
+      ];
 
       connections.forEach((pair, i) => {
         const [a, b] = pair;
@@ -207,10 +213,10 @@ function renderLoop() {
       );
       trailLine.geometry.attributes.position.needsUpdate = true;
 
-      let speed = 0;
+      let speedVal = 0;
       if (lastFootPos && lastTime) {
         const dt = (now - lastTime) / 1000;
-        speed = footPos.distanceTo(lastFootPos) / dt;
+        speedVal = footPos.distanceTo(lastFootPos) / dt;
       }
 
       lastFootPos = footPos.clone();
@@ -218,13 +224,10 @@ function renderLoop() {
 
       debug.textContent =
         `FPS: ${Math.round(1000 / (performance.now() - now))}\n` +
-        `Foot speed: ${speed.toFixed(3)} m/s\n` +
+        `Foot speed: ${speedVal.toFixed(3)} m/s\n` +
         `Trail points: ${trailPoints.length}\n` +
-        `readyState: ${video.readyState}\n` +
-        `currentTime: ${video.currentTime.toFixed(3)}\n` +
-        `paused: ${video.paused}\n` +
-        `video.ended: ${video.ended}\n` +
-        `video.error: ${video.error}`;
+        `Speed: ${video.playbackRate.toFixed(1)}x\n` +
+        `Time: ${video.currentTime.toFixed(2)} / ${video.duration.toFixed(2)}`;
     }
   }
 
@@ -239,10 +242,6 @@ function renderLoop() {
   log("Starting...");
   await initPose();
   initThree();
-
-  // メインループを開始する前に、ビデオの準備を待つ
-  video.addEventListener("loadeddata", () => {
-    log("Video loaded. Starting render loop...");
-    renderLoop();
-  });
+  renderLoop();
 })();
+
