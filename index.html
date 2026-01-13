@@ -40,6 +40,16 @@
       right: 0;
       z-index: 20;
     }
+
+    /* Safari 対策：video を display:none にしない */
+    #video {
+      position: absolute;
+      left: -9999px;
+      top: 0;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+    }
   </style>
 </head>
 
@@ -48,10 +58,9 @@
 
   <input id="fileInput" type="file" accept="video/*" />
 
-  <video id="video" playsinline style="display:none"></video>
+  <video id="video" playsinline></video>
   <canvas id="output"></canvas>
 
   <script type="module" src="app.js"></script>
 </body>
 </html>
-
