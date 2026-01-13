@@ -114,6 +114,26 @@ document.getElementById("fileInput").addEventListener("change", e => {
   };
 });
 
+video.addEventListener("loadeddata", () => {
+  log("Video ready. Tap screen to start.");
+  // タップイベントを強制的にトリガーするための補助関数を追加
+  const startVideo = () => {
+    video.play().catch(e => {
+      console.error("Error playing video:", e);
+      log("Error playing video. Please try again.");
+    });
+    log("Video playing");
+  };
+
+  // タップイベントを登録
+  document.body.addEventListener("click", startVideo, { once: true });
+
+  // タップイベントが動作しない場合、自動再生を試みる
+  setTimeout(() => {
+    startVideo();
+  }, 1000);
+});
+
 // --------------------------------------------------
 // 骨格接続
 // --------------------------------------------------
@@ -195,7 +215,9 @@ function renderLoop() {
         `Trail points: ${trailPoints.length}\n` +
         `readyState: ${video.readyState}\n` +
         `currentTime: ${video.currentTime.toFixed(3)}\n` +
-        `paused: ${video.paused}`;
+        `paused: ${video.paused}\n` +
+        `video.ended: ${video.ended}\n` +
+        `video.error: ${video.error}`;
     }
   }
 
@@ -210,5 +232,10 @@ function renderLoop() {
   log("Starting...");
   await initPose();
   initThree();
-  renderLoop();
+
+  // メインループを開始する前に、ビデオの準備を待つ
+  video.addEventListener("loadeddata", () => {
+    log("Video loaded. Starting render loop...");
+    renderLoop();
+  });
 })();
