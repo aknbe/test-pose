@@ -56,7 +56,6 @@ function initThree() {
     skeletonLines.push(line);
   }
 
-  // 足先軌跡ライン
   const trailGeometry = new THREE.BufferGeometry();
   trailGeometry.setAttribute(
     "position",
@@ -102,9 +101,17 @@ document.getElementById("fileInput").addEventListener("change", e => {
 
   const url = URL.createObjectURL(file);
   video.src = url;
-  video.play();
 
   log("Video loaded: " + file.name);
+
+  video.onloadeddata = () => {
+    log("Video ready. Tap screen to start.");
+
+    document.body.addEventListener("click", () => {
+      video.play();
+      log("Video playing");
+    }, { once: true });
+  };
 });
 
 // --------------------------------------------------
@@ -133,7 +140,6 @@ function renderLoop() {
     if (result.landmarks && result.landmarks[0]) {
       const lm = result.landmarks[0];
 
-      // 骨格描画
       connections.forEach((pair, i) => {
         const [a, b] = pair;
         const p1 = lm[a];
@@ -153,7 +159,6 @@ function renderLoop() {
         line.geometry.attributes.position.needsUpdate = true;
       });
 
-      // 足先（右足：28）
       const foot = lm[28];
       const footPos = new THREE.Vector3(
         foot.x - 0.5,
@@ -161,7 +166,6 @@ function renderLoop() {
         -foot.z
       );
 
-      // 軌跡追加
       trailPoints.push(footPos.clone());
       if (trailPoints.length > 200) trailPoints.shift();
 
@@ -176,7 +180,6 @@ function renderLoop() {
       );
       trailLine.geometry.attributes.position.needsUpdate = true;
 
-      // 速度計算
       let speed = 0;
       if (lastFootPos && lastTime) {
         const dt = (now - lastTime) / 1000;
@@ -189,7 +192,10 @@ function renderLoop() {
       debug.textContent =
         `FPS: ${Math.round(1000 / (performance.now() - now))}\n` +
         `Foot speed: ${speed.toFixed(3)} m/s\n` +
-        `Trail points: ${trailPoints.length}`;
+        `Trail points: ${trailPoints.length}\n` +
+        `readyState: ${video.readyState}\n` +
+        `currentTime: ${video.currentTime.toFixed(3)}\n` +
+        `paused: ${video.paused}`;
     }
   }
 
