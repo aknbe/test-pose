@@ -1,3 +1,4 @@
+console.log("app.js is running!");
 import {
   PoseLandmarker,
   FilesetResolver
@@ -239,3 +240,4 @@ function renderLoop() {
     renderLoop();
   });
 })();
+
