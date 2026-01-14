@@ -67,14 +67,27 @@
     }
 
     /* スライダー */
-    #slider {
+    /*#slider {
       position: absolute;
-      bottom: 12px;
+      bottom: 10px;
       left: 50%;
       transform: translateX(-50%) scale(0.7);
       opacity: 0.4;
       width: 60%;
       z-index: 20;
+    }*/
+    #video-controls {
+      display: flex;
+      align-items: center;
+      opacity: 0.4;
+      gap: 10px;
+      width: 100%;
+      margin-top: 8px;
+    }
+
+    #seekBar {
+      flex: 1;
+      opacity: 0.4;
     }
 
     /* UI ボタン */
@@ -86,6 +99,7 @@
       display: flex;
       flex-direction: column;
       gap: 6px;
+      opacity: 0.4;
     }
 
     #ui button, #ui input[type="file"] {
@@ -112,10 +126,16 @@
 </head>
 
 <body>
+  <div id="video-controls">
+    <button id="playPauseBtn">▶︎</button>
+    <input type="range" id="seekBar" min="0" max="100" value="0">
+    <input type="range" id="speedBar" min="0.1" max="2" step="0.1" value="1">
+    <span id="speedLabel">1.0x</span>
+  </div>
+
   <div id="container" class="overlay">
     <video id="video" playsinline webkit-playsinline muted loop></video>
     <canvas id="output"></canvas>
-    <input id="slider" type="range" min="0" max="100" value="0" />
 
     <div id="ui">
       <input id="fileInput" type="file" accept="video/*" />
@@ -135,8 +155,6 @@
     }
   </script>
 
-  <script type="module" src="./kickposeapp1.js"></script>
+  <script type="module" src="./kickposeapp2.js"></script>
 </body>
 </html>
-
-
