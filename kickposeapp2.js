@@ -12,7 +12,6 @@ import {
 const video = document.getElementById("video");
 const canvas = document.getElementById("output");
 const container = document.getElementById("container");
-const slider = document.getElementById("slider");
 const fileInput = document.getElementById("fileInput");
 const cameraBtn = document.getElementById("cameraBtn");
 const videoBtn = document.getElementById("videoBtn");
@@ -29,11 +28,14 @@ let orthoCamera;
 let perspectiveCamera;
 let activeCamera;
 
+let filteredLm1 = null; // 一次フィルタ
+let filteredLm2 = null; // 二次フィルタ（最終出力）
+
 let skeletonLines = [];
 let trailPoints = [];
-let trailLine;
-let lastFootPos = null;
 let lastTime = null;
+let lastLeftPos = null;
+let lastRightPos = null;
 
 let leftTrailPoints = [];
 let rightTrailPoints = [];
@@ -43,6 +45,51 @@ let rightTrailLine;
 
 let isPoseRotating3D = false;
 let currentMode = "video";
+
+function lowpass2(prev1, prev2, next, alpha = 0.25) {
+  // prev1: 一次フィルタの前回値
+  // prev2: 二次フィルタの前回値
+  // next: 新しい入力値（x,y,z）
+
+  const y1 = {
+    x: prev1 ? prev1.x * (1 - alpha) + next.x * alpha : next.x,
+    y: prev1 ? prev1.y * (1 - alpha) + next.y * alpha : next.y,
+    z: prev1 ? prev1.z * (1 - alpha) + next.z * alpha : next.z,
+  };
+
+  const y2 = {
+    x: prev2 ? prev2.x * (1 - alpha) + y1.x * alpha : y1.x,
+    y: prev2 ? prev2.y * (1 - alpha) + y1.y * alpha : y1.y,
+    z: prev2 ? prev2.z * (1 - alpha) + y1.z * alpha : y1.z,
+  };
+
+  return { y1, y2 };
+}
+
+function updatePoseLandmarks(lm) {
+  const playbackRate = video.playbackRate;
+
+  const baseTau = 0.015; // 20ms
+  const tau = baseTau / playbackRate; // 再生速度に応じて時定数をスケール
+
+  const dt = 1 / 30; // MediaPipe のフレーム周期
+  let alpha = dt / tau;
+
+  // α が 1 を超えないように制限
+  if (alpha > 1) alpha = 1;
+
+  if (!filteredLm1) {
+    filteredLm1 = lm.map(p => ({ x: p.x, y: p.y, z: p.z }));
+    filteredLm2 = lm.map(p => ({ x: p.x, y: p.y, z: p.z }));
+    return;
+  }
+
+  for (let i = 0; i < lm.length; i++) {
+    const { y1, y2 } = lowpass2(filteredLm1[i], filteredLm2[i], lm[i], alpha);
+    filteredLm1[i] = y1;
+    filteredLm2[i] = y2;
+  }
+}
 
 /* -----------------------------
    レイアウト切り替え
@@ -97,13 +144,17 @@ function initThree() {
   controls.addEventListener("start", () => {
     isPoseRotating3D = true;
     activeCamera = perspectiveCamera;
+    gridHelper.visible = true;
+    axesHelper.visible = true;
+
     updateLayout();
   });
 
-  /* controls.addEventListener("end", () => {
-    isPoseRotating3D = false;
-    updateLayout();
-  }); */ // 終了時は何もしない 
+  controls.addEventListener("end", () => {
+    //isPoseRotating3D = false;
+    //updateLayout();
+    console.log(`Left foot Z: ${gridHelper.position}`);
+  }); // 終了時は何もしない 
 
   /* 骨格ライン生成 */
   const connections = [
@@ -121,14 +172,6 @@ function initThree() {
   const right = [14, 16, 20, 26, 28, 30, 32];
 
   connections.forEach((pair, i) => {
-    /*const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute(
-      "position",
-      new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0], 3)
-    );*/
-
-    //const material = new THREE.LineBasicMaterial({ color: 0xffff00 });
-    //const line = new THREE.Line(geometry, material);
     const [a, b] = pair;
     // ★ 左右の部位で色を決める
     let color = 0xffff00; // デフォルト（胴体）
@@ -152,13 +195,6 @@ function initThree() {
     skeletonLines.push(line);
   });
 
-  /* 足の軌跡ライン */
-  const trailGeometry = new THREE.BufferGeometry();
-  trailLine = new THREE.Line(
-    trailGeometry,
-    new THREE.LineBasicMaterial({ color: 0xff0000 })
-  );
-  scene.add(trailLine);
   // 左足の軌跡（赤）
   const leftTrailGeometry = new THREE.BufferGeometry();
   leftTrailLine = new THREE.Line(
@@ -174,6 +210,19 @@ function initThree() {
     new THREE.LineBasicMaterial({ color: 0x0000ff })
   );
   scene.add(rightTrailLine);
+
+  // === 3D 用の地平面と XYZ 軸 ===
+    const grid = new THREE.GridHelper(400, 20, 0x444444, 0x888888);
+    grid.visible = false; // 初期状態は非表示（2D のため）
+    scene.add(grid);
+
+    const axes = new THREE.AxesHelper(200);
+    axes.visible = false; // 初期状態は非表示
+    scene.add(axes);
+
+    // 後で参照できるようにグローバルへ
+    window.gridHelper = grid;
+    window.axesHelper = axes;
 }
 /* */
 function setupCameraForVideo() {
@@ -234,8 +283,6 @@ function startVideoFile() {
       setupCameraForVideo();
       renderer.setSize(video.videoWidth, video.videoHeight, false);
       activeCamera = orthoCamera; 
-      //camera.position.set(0, 0, 300);
-      //camera.lookAt(0, 0, 0);
       video.play().then(updateLayout);
     };
   };
@@ -282,8 +329,10 @@ function renderLoop() {
     const result = poseLandmarker.detectForVideo(video, now);
 
     if (result.landmarks && result.landmarks[0]) {
+      const SCALE = 200;
       const lm = result.landmarks[0];
-
+      updatePoseLandmarks(lm);
+    
       const left = [11, 13, 15, 19, 23, 25, 27, 29, 31];
       const right = [12, 14, 16, 20, 24, 26, 28, 30, 32];
 
@@ -300,50 +349,12 @@ function renderLoop() {
 
       connections.forEach((pair, i) => {
         const [a, b] = pair;
-        const p1 = lm[a];
-        const p2 = lm[b];
-
+        const p1 = filteredLm2[a];
+        const p2 = filteredLm2[b];
         const line = skeletonLines[i];
-        /*
-        const pos = line.geometry.attributes.position.array;
-
-        if (isPoseRotating3D) {
-          // ★ 3D 表示用（PerspectiveCamera）
-          const SCALE = 200;
-
-          pos[0] = (p1.x - 0.5) * SCALE;
-          pos[1] = (-p1.y + 0.5) * SCALE;
-          pos[2] = -p1.z * SCALE;
-
-          pos[3] = (p2.x - 0.5) * SCALE;
-          pos[4] = (-p2.y + 0.5) * SCALE;
-          pos[5] = -p2.z * SCALE;
-
-        } else {
-          const x1 = p1.x * video.videoWidth;
-          const y1 = p1.y * video.videoHeight;
-          const x2 = p2.x * video.videoWidth;
-          const y2 = p2.y * video.videoHeight;
-          pos[0] = x1;
-          pos[1] = ofseth + video.videoHeight - y1;
-          pos[2] = 0;
-
-          pos[3] = x2;
-          pos[4] = ofseth + video.videoHeight - y2;
-          pos[5] = 0;
-
-        }
-        
-        if (left.includes(a)) line.material.color.set(0xffff00);
-        else if (right.includes(a)) line.material.color.set(0x00ffff);
-
-        line.geometry.attributes.position.needsUpdate = true;
-        */
-
         const posArray = [];
-        if (isPoseRotating3D) {
-            const SCALE = 200;
 
+        if (isPoseRotating3D) {
             posArray[0] = (p1.x - 0.5) * SCALE;
             posArray[1] = (-p1.y + 0.5) * SCALE;
             posArray[2] = -p1.z * SCALE;
@@ -374,7 +385,7 @@ function renderLoop() {
         line.material.needsUpdate = true;
       });
 
-      const foot = lm[28];
+      const foot = filteredLm2[28];
       const footPos = new THREE.Vector3(
         foot.x - 0.5,
         -foot.y + 0.5,
@@ -387,34 +398,42 @@ function renderLoop() {
       const trailArray = [];
       trailPoints.forEach(p => trailArray.push(p.x, p.y, p.z));
 
-      trailLine.geometry.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(trailArray, 3)
-      );
-      trailLine.geometry.attributes.position.needsUpdate = true;
-
       // 左右のつま先ランドマーク
-      const leftFoot = lm[31];
-      const rightFoot = lm[32];
+      const leftFoot = filteredLm2[31];
+      const rightFoot = filteredLm2[32];
+
+      if (leftFoot && rightFoot) {
+        const miny = Math.min(-leftFoot.y, -rightFoot.y);
+        const gridy = (miny+0.5) * SCALE ;//+ 50;  // +50 is an offset to ensure visibility
+        gridHelper.position.set(0, gridy, 0);
+        //console.log(`Left foot Z: ${-leftFoot.z}, Right foot Z: ${-rightFoot.z}, Min Z: ${minZ}`);
+      }
 
       let leftPos, rightPos;
+      leftPos = new THREE.Vector3(
+        (leftFoot.x - 0.5) ,
+        (-leftFoot.y + 0.5) ,
+        -leftFoot.z 
+      );
+      rightPos = new THREE.Vector3(
+        (rightFoot.x - 0.5) ,
+        (-rightFoot.y + 0.5) ,
+        -rightFoot.z
+      );
+
+      let speedVal = 0; // 足先の速度推定
+      if (lastLeftPos && lastTime) {
+        const dt = (now - lastTime) / 1000;
+        speedVal = Math.max(leftPos.distanceTo(lastLeftPos),rightPos.distanceTo(lastRightPos)) / dt;
+      }
+      lastLeftPos = leftPos.clone();
+      lastRightPos = rightPos.clone();
+      lastTime = now;
 
       if (isPoseRotating3D) {
         // ★ 3D 表示用
-        const SCALE = 200;
-
-        leftPos = new THREE.Vector3(
-          (leftFoot.x - 0.5) * SCALE,
-          (-leftFoot.y + 0.5) * SCALE,
-          -leftFoot.z * SCALE
-        );
-
-        rightPos = new THREE.Vector3(
-          (rightFoot.x - 0.5) * SCALE,
-          (-rightFoot.y + 0.5) * SCALE,
-          -rightFoot.z * SCALE
-        );
-
+        leftPos.multiplyScalar(SCALE);
+        rightPos.multiplyScalar(SCALE); 
       } else {
         // ★ 2D オーバーレイ用
         const lx = leftFoot.x * video.videoWidth;
@@ -452,23 +471,16 @@ function renderLoop() {
       );
       rightTrailLine.geometry.attributes.position.needsUpdate = true;
 
-      let speedVal = 0;
-      if (lastFootPos && lastTime) {
-        const dt = (now - lastTime) / 1000;
-        speedVal = footPos.distanceTo(lastFootPos) / dt;
-      }
-
-      lastFootPos = footPos.clone();
-      lastTime = now;
 
       debug.textContent =
         `FPS: ${Math.round(1000 / (performance.now() - now))}\n` +
         `Foot speed: ${speedVal.toFixed(3)} m/s\n` +
         `Trail points: ${trailPoints.length}\n` +
+        `Grid Helper Position: X=${gridHelper.position.x.toFixed(1)}, Y=${gridHelper.position.y.toFixed(1)}, Z=${gridHelper.position.z.toFixed(2)}\n` +  // 追加
         `Speed: ${video.playbackRate.toFixed(1)}x\n` +
-        `Time: ${video.currentTime.toFixed(2)} / ${video.duration.toFixed(2)}\n`+ 
-        `container: ${container.className}\n` + 
-        `videooffsize: ${video.offsetWidth} ${video.offsetHeight}\n`+
+        `Time: ${video.currentTime.toFixed(2)} / ${video.duration.toFixed(2)}\n` +
+        `container: ${container.className}\n` +
+        `videooffsize: ${video.offsetWidth} ${video.offsetHeight}\n` +
         `leftPos: ${leftPos.x.toFixed(1)} ${leftPos.y.toFixed(1)}`;
     }
   }
@@ -485,6 +497,9 @@ videoBtn.onclick = () => {
   isPoseRotating3D = false;   // ★ 3D 回転状態をリセット
   activeCamera = orthoCamera;   // ★ カメラをオーバーレイ用に戻す
   controls.reset();   // ★ OrbitControls を初期化
+  gridHelper.visible = false;
+  axesHelper.visible = false;
+
   updateLayout();   // ★ small-video を解除
   startVideoFile();   // ★ 動画モードに戻す
 };
