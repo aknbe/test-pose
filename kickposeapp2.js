@@ -318,11 +318,24 @@ function renderLoop() {
   var videoRatio = video.videoWidth / video.videoHeight;
   var dispwidth = video.offsetWidth, dispheight = video.offsetHeight;
   var elementRatio = dispwidth/dispheight;
-  const ofseth = (video.offsetHeight - dispheight) / 2
+  //var ofseth = (video.offsetHeight - dispheight) / 2
   // If the video element is short and wide
   if(elementRatio > videoRatio) dispwidth = dispheight * videoRatio;
   // It must be tall and thin, or exactly equal to the original ratio
   else dispheight = dispwidth / videoRatio;
+
+  // iPhone Safari 判定
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const videoRect = video.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  const ofseth = videoRect.top - containerRect.top;
+  if (isIOS) {
+    var displayW = videoRect.width;
+    var displayH = videoRect.height;
+  } else {
+    var displayW = video.videoWidth;
+    var displayH = video.videoHeight;
+  }
 
   if (poseLandmarker && video.readyState >= 2) {
     const now = performance.now();
@@ -368,14 +381,21 @@ function renderLoop() {
             const y1 = p1.y * video.videoHeight;
             const x2 = p2.x * video.videoWidth;
             const y2 = p2.y * video.videoHeight;
-
-            posArray[0] = x1;
+            /*posArray[0] = x1;
             posArray[1] = ofseth + video.videoHeight - y1;
             posArray[2] = 0;
 
             posArray[3] = x2;
             posArray[4] = ofseth + video.videoHeight - y2;
+            posArray[5] = 0; */
+
+            posArray[0] = p1.x * displayW;;
+            posArray[1] = ofseth + displayH - p1.y * displayH;
+            posArray[2] = 0;
+            posArray[3] = p2.x * displayW;;
+            posArray[4] = ofseth + displayH - p2.y * displayH;
             posArray[5] = 0;
+
         }
 
         // ★ Line2 用の更新
@@ -436,11 +456,11 @@ function renderLoop() {
         rightPos.multiplyScalar(SCALE); 
       } else {
         // ★ 2D オーバーレイ用
-        const lx = leftFoot.x * video.videoWidth;
-        const ly = ofseth + video.videoHeight - leftFoot.y * video.videoHeight;
+        const lx = leftFoot.x * displayW;
+        const ly = ofseth + displayH - leftFoot.y * displayH;
 
-        const rx = rightFoot.x * video.videoWidth;
-        const ry = ofseth + video.videoHeight - rightFoot.y * video.videoHeight;
+        const rx = rightFoot.x * displayW;
+        const ry = ofseth + displayH - rightFoot.y * displayH;
 
         leftPos = new THREE.Vector3(lx, ly, 0);
         rightPos = new THREE.Vector3(rx, ry, 0);
@@ -471,17 +491,14 @@ function renderLoop() {
       );
       rightTrailLine.geometry.attributes.position.needsUpdate = true;
 
-
       debug.textContent =
         `FPS: ${Math.round(1000 / (performance.now() - now))}\n` +
-        `Foot speed: ${speedVal.toFixed(3)} m/s\n` +
-        `Trail points: ${trailPoints.length}\n` +
-        `Grid Helper Position: X=${gridHelper.position.x.toFixed(1)}, Y=${gridHelper.position.y.toFixed(1)}, Z=${gridHelper.position.z.toFixed(2)}\n` +  // 追加
         `Speed: ${video.playbackRate.toFixed(1)}x\n` +
         `Time: ${video.currentTime.toFixed(2)} / ${video.duration.toFixed(2)}\n` +
         `container: ${container.className}\n` +
-        `videooffsize: ${video.offsetWidth} ${video.offsetHeight}\n` +
-        `leftPos: ${leftPos.x.toFixed(1)} ${leftPos.y.toFixed(1)}`;
+        `videooffsize: ${video.offsetWidth} ${video.offsetHeight}`+
+        `Foot speed: ${speedVal.toFixed(3)} m/s`;
+
     }
   }
 
