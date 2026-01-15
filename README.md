@@ -44,4 +44,33 @@ https://aknbe.github.io/test-pose/
 
 ---
 
-## 📁 ファイル構成
+## 🛠 使用技術
+
+- **MediaPipe Pose**
+- **Three.js**
+- **Line2 / LineGeometry / LineMaterial**
+- **JavaScript ES Modules**
+- **HTML5 Video**
+- **CSS3**
+
+---
+
+## 📱 対応ブラウザ
+
+- iPhone Safari（iOS 15+）
+- Android Chrome
+- PC Chrome / Edge / Firefox / Safari
+
+---
+
+## 📝 ライセンス
+
+MIT License  
+自由に改変・利用できます。
+
+---
+
+## 👤 作者
+
+ak  
+https://github.com/aknbe
