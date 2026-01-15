@@ -22,6 +22,8 @@ const seekBar = document.getElementById("seekBar");
 const speedBar = document.getElementById("speedBar");
 const speedLabel = document.getElementById("speedLabel");
 
+const statusElement = document.getElementById('loading-status');
+
 let poseLandmarker;
 let scene, renderer, controls;
 let orthoCamera;
@@ -36,6 +38,7 @@ let trailPoints = [];
 let lastTime = null;
 let lastLeftPos = null;
 let lastRightPos = null;
+let footspeedmax = 0.0;
 
 let leftTrailPoints = [];
 let rightTrailPoints = [];
@@ -45,6 +48,13 @@ let rightTrailLine;
 
 let isPoseRotating3D = false;
 let currentMode = "video";
+
+function setStatus(msg) {
+  if (statusElement) {
+    statusElement.textContent = msg;
+  }
+  console.log("[STATUS]", msg);  // デバッグ用にも
+}
 
 function lowpass2(prev1, prev2, next, alpha = 0.25) {
   // prev1: 一次フィルタの前回値
@@ -94,6 +104,7 @@ function updatePoseLandmarks(lm) {
 /* DEFAULT OVERRAY CAMERA */
 function setupCameraForVideo() {
   // iPhone Safari 判定
+  //renderer.setSize(window.innerWidth, window.innerHeight);
   const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
   const videoRect = video.getBoundingClientRect();
   if (isIOS) {
@@ -140,7 +151,7 @@ window.addEventListener("resize", updateLayout);
 ------------------------------ */
 function initThree() {
   renderer = new THREE.WebGLRenderer({ canvas, alpha: true });
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  //renderer.setSize(window.innerWidth, window.innerHeight);
 
   scene = new THREE.Scene();
   perspectiveCamera  = new THREE.PerspectiveCamera(
@@ -150,6 +161,7 @@ function initThree() {
     2000
   ); /* */
   perspectiveCamera.position.set(0, 0, 300);
+  perspectiveCamera.updateProjectionMatrix()
   activeCamera = perspectiveCamera; // 初期はどちらでもOK
 
   controls = new OrbitControls(activeCamera, renderer.domElement);
@@ -157,10 +169,13 @@ function initThree() {
 
   controls.addEventListener("start", () => {
     isPoseRotating3D = true;
+    controls.target.set(0, 0, 0);
+    controls.update();
+    //perspectiveCamera.updateProjectionMatrix()
+    // lookat(0,0,0);
     activeCamera = perspectiveCamera;
     gridHelper.visible = true;
     axesHelper.visible = true;
-
     updateLayout();
   });
 
@@ -250,8 +265,8 @@ async function initPose() {
   poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
     baseOptions: {
       modelAssetPath:
-        //"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
-        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task",
+        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
+        //"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task",
       delegate: "GPU",
     },
     runningMode: "VIDEO",
@@ -273,6 +288,7 @@ function startVideoFile() {
   }
 
   fileInput.onchange = () => {
+    setStatus("Loading Movie file...");
     const file = fileInput.files[0];
     if (!file) return;
     // ★ 3D 回転状態をリセット
@@ -341,18 +357,26 @@ function renderLoop() {
   }
 
   if (poseLandmarker && video.readyState >= 2) {
+    setStatus("");  // 空にしてもOK
+    if (statusElement) {
+      statusElement.style.display = 'none';  // または statusElement.remove();
+    }
     const now = performance.now();
     const result = poseLandmarker.detectForVideo(video, now);
 
     if (result.landmarks && result.landmarks[0]) {
-      const SCALE = 200;
 
       const worldLm = result.worldLandmarks?.[0] ?? null;  // or result.worldLandmarks?.[0]
       if (isPoseRotating3D && worldLm) {
         // Use worldLm for 3D / filteredLm2 etc.
         updatePoseLandmarks(worldLm);
+        var SCALE = 100;
+        var CENTER = 0.0; // 腰部
+        console.log("use worldlandmarks:", result.worldlandmarks);
       } else {
-        console.log("worldlandmarks:", result.worldlandmarks);
+        var SCALE = 200;
+        var CENTER = 0.5; //画面
+        // console.log("not worldlandmarks:", result.worldlandmarks);
         updatePoseLandmarks(result.landmarks[0]);  // fallback
       }
 
@@ -378,12 +402,12 @@ function renderLoop() {
         const posArray = [];
 
         if (isPoseRotating3D) {
-            posArray[0] = (p1.x - 0.5) * SCALE;
-            posArray[1] = (-p1.y + 0.5) * SCALE;
+            posArray[0] = (p1.x - CENTER) * SCALE;
+            posArray[1] = (-p1.y + CENTER) * SCALE;
             posArray[2] = -p1.z * SCALE;
 
-            posArray[3] = (p2.x - 0.5) * SCALE;
-            posArray[4] = (-p2.y + 0.5) * SCALE;
+            posArray[3] = (p2.x - CENTER) * SCALE;
+            posArray[4] = (-p2.y + CENTER) * SCALE;
             posArray[5] = -p2.z * SCALE;
 
         } else {
@@ -421,20 +445,20 @@ function renderLoop() {
 
       if (leftFoot && rightFoot) {
         const miny = Math.min(-leftFoot.y, -rightFoot.y);
-        const gridy = (miny+0.5) * SCALE ;//+ 50;  // +50 is an offset to ensure visibility
+        const gridy = (miny+CENTER) * SCALE ;//+ 50;  // +50 is an offset to ensure visibility
         gridHelper.position.set(0, gridy, 0);
         //console.log(`Left foot Z: ${-leftFoot.z}, Right foot Z: ${-rightFoot.z}, Min Z: ${minZ}`);
       }
 
       let leftPos, rightPos;
       leftPos = new THREE.Vector3(
-        (leftFoot.x - 0.5) ,
-        (-leftFoot.y + 0.5) ,
+        (leftFoot.x - CENTER) ,
+        (-leftFoot.y + CENTER) ,
         -leftFoot.z 
       );
       rightPos = new THREE.Vector3(
-        (rightFoot.x - 0.5) ,
-        (-rightFoot.y + 0.5) ,
+        (rightFoot.x - CENTER) ,
+        (-rightFoot.y + CENTER) ,
         -rightFoot.z
       );
 
@@ -443,6 +467,7 @@ function renderLoop() {
         const dt = (now - lastTime) / 1000;
         speedVal = Math.max(leftPos.distanceTo(lastLeftPos),rightPos.distanceTo(lastRightPos)) / dt;
       }
+      footspeedmax = Math.max(footspeedmax,speedVal)
       lastLeftPos = leftPos.clone();
       lastRightPos = rightPos.clone();
       lastTime = now;
@@ -454,10 +479,10 @@ function renderLoop() {
       } else {
         // ★ 2D オーバーレイ用
         const lx = leftFoot.x * displayW;
-        const ly = ofseth + displayH - leftFoot.y * displayH;
+        const ly = ofseth + (1 - leftFoot.y) * displayH;
 
         const rx = rightFoot.x * displayW;
-        const ry = ofseth + displayH - rightFoot.y * displayH;
+        const ry = ofseth + (1 - rightFoot.y) * displayH;
 
         leftPos = new THREE.Vector3(lx, ly, 0);
         rightPos = new THREE.Vector3(rx, ry, 0);
@@ -490,12 +515,11 @@ function renderLoop() {
 
       debug.textContent =
         `FPS: ${Math.round(1000 / (performance.now() - now))}\n` +
+        `Foot speed: ${speedVal.toFixed(2)} max: ${footspeedmax.toFixed(2)} m/s\n` +
         `Speed: ${video.playbackRate.toFixed(1)}x\n` +
         `Time: ${video.currentTime.toFixed(2)} / ${video.duration.toFixed(2)}\n` +
-        `container: ${container.className}\n` +
-        `videooffsize: ${video.offsetWidth} ${video.offsetHeight}`+
-        `Foot speed: ${speedVal.toFixed(3)} m/s`;
-
+        //`container: ${container.className}\n` +
+        `vide WH ofs: ${displayW.toFixed(1)} ${displayH.toFixed(1)} ${ofseth.toFixed(1)}`;
     }
   }
 
@@ -555,8 +579,21 @@ speedBar.oninput = () => {
    起動
 ------------------------------ */
 async function main() {
-  initThree();
+  setStatus("Initialise 3D Three.js...");
+  initThree();  // これが速いので最初に
+  setStatus("Loading MediaPipe libs.. (初回は時間がかかります)");
   await initPose();
+  setStatus("Select Movie file...");
+  
+  // startVideoFile();  // またはカメラ起動部分
+
+  // 最初のフレーム処理が始まるまで少し待ってから消す（任意）
+  /*setTimeout(() => {
+    if (statusElement) {
+      statusElement.style.display = 'none';  // または statusElement.remove();
+    }
+  }, 1500);  // 1.5秒後くらいに消す（調整可）*/
+
   renderLoop();
 }
 
