@@ -4,37 +4,87 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>test-pose</title>
-
-  <link rel="stylesheet" href="style.css">
-
-  <!-- Three.js CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/lines/Line2.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/lines/LineGeometry.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/lines/LineMaterial.js"></script>
-
-  <!-- MediaPipe Pose -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 40px;
+      line-height: 1.8;
+    }
+    h1 {
+      font-size: 28px;
+      margin-bottom: 10px;
+    }
+    a {
+      color: #0066cc;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    .section {
+      margin-top: 30px;
+    }
+    .screenshot {
+      margin-top: 20px;
+      text-align: center;
+    }
+    .screenshot img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    }
+  </style>
 </head>
 
 <body>
 
-  <div id="container">
-    <video id="video" playsinline></video>
-    <canvas id="overlay"></canvas>
-    <canvas id="three-canvas"></canvas>
+  <h1>test-pose</h1>
+  <p>MediaPipe Pose と Three.js を使ったポーズ推定・3D 可視化デモです。</p>
+
+  <div class="section">
+    <h2>▶ スクリーンショット</h2>
+    <div class="screenshot">
+      <img src="screenshot.jpg" alt="test-pose screenshot">
+    </div>
   </div>
 
-  <!-- 再生コントロール -->
-  <div id="video-controls">
-    <button id="playPauseBtn">▶︎</button>
-    <input type="range" id="seekBar" min="0" max="100" value="0">
-    <input type="range" id="speedBar" min="0.1" max="2" step="0.1" value="1">
-    <span id="speedLabel">1.0x</span>
+  <div class="section">
+    <h2>▶ テストページ</h2>
+    <p>
+      <a href="https://aknbe.github.io/test-pose/test.html" target="_blank">
+        https://aknbe.github.io/test-pose/test.html
+      </a>
+    </p>
   </div>
 
-  <script type="module" src="kickposeapp2.js"></script>
+  <div class="section">
+    <h2>▶ GitHub リポジトリ</h2>
+    <p>
+      <a href="https://github.com/aknbe/test-pose" target="_blank">
+        https://github.com/aknbe/test-pose
+      </a>
+    </p>
+  </div>
+
+  <div class="section">
+    <h2>▶ Google MediaPipe Pose</h2>
+    <p>
+      <a href="https://developers.google.com/mediapipe/solutions/vision/pose" target="_blank">
+        https://developers.google.com/mediapipe/solutions/vision/pose
+      </a>
+    </p>
+  </div>
+
+  <div class="section">
+    <h2>▶ 使い方</h2>
+    <ul>
+      <li>テストページを開く</li>
+      <li>動画を選択するか、デフォルト動画を再生</li>
+      <li>2D オーバーレイ / 3D 表示を切り替えて動作を確認</li>
+      <li>再生速度やシークバーで動きを細かくチェック</li>
+    </ul>
+  </div>
+
 </body>
 </html>
