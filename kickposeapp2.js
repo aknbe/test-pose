@@ -50,19 +50,16 @@ function lowpass2(prev1, prev2, next, alpha = 0.25) {
   // prev1: 一次フィルタの前回値
   // prev2: 二次フィルタの前回値
   // next: 新しい入力値（x,y,z）
-
   const y1 = {
     x: prev1 ? prev1.x * (1 - alpha) + next.x * alpha : next.x,
     y: prev1 ? prev1.y * (1 - alpha) + next.y * alpha : next.y,
     z: prev1 ? prev1.z * (1 - alpha) + next.z * alpha : next.z,
   };
-
   const y2 = {
     x: prev2 ? prev2.x * (1 - alpha) + y1.x * alpha : y1.x,
     y: prev2 ? prev2.y * (1 - alpha) + y1.y * alpha : y1.y,
     z: prev2 ? prev2.z * (1 - alpha) + y1.z * alpha : y1.z,
   };
-
   return { y1, y2 };
 }
 
@@ -94,12 +91,33 @@ function updatePoseLandmarks(lm) {
 /* -----------------------------
    レイアウト切り替え
 ------------------------------ */
+/* DEFAULT OVERRAY CAMERA */
+function setupCameraForVideo() {
+  // iPhone Safari 判定
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const videoRect = video.getBoundingClientRect();
+  if (isIOS) {
+    var w = videoRect.width;
+    var h = videoRect.height;
+  } else {
+    var w = video.videoWidth;
+    var h = video.videoHeight;
+  }
+  orthoCamera = new THREE.OrthographicCamera(
+    0, w,
+    h, 0,
+    -1000, 1000
+  );
+  orthoCamera.updateProjectionMatrix();
+  activeCamera = orthoCamera;
+}
+
 function updateLayout() {
   const screenIsPortrait = window.innerHeight > window.innerWidth;
   const videoIsPortrait = video.videoHeight > video.videoWidth;
 
   if (screenIsPortrait === videoIsPortrait) {
-    if (isPoseRotating3D) {
+    if (isPoseRotating3D &&   currentMode == "video") {
       container.className = "small-video";
       return;
     } else {
@@ -111,11 +129,7 @@ function updateLayout() {
       : "horizontal-split";
   }
   if (!isPoseRotating3D && orthoCamera && video.videoWidth > 0) {
-    orthoCamera.left = 0;
-    orthoCamera.right = video.videoWidth;
-    orthoCamera.top = video.videoHeight;
-    orthoCamera.bottom = 0;
-    orthoCamera.updateProjectionMatrix();
+    setupCameraForVideo();
   }
 }
 
@@ -224,17 +238,6 @@ function initThree() {
     window.gridHelper = grid;
     window.axesHelper = axes;
 }
-/* */
-function setupCameraForVideo() {
-  const w = video.videoWidth;
-  const h = video.videoHeight;
-  orthoCamera = new THREE.OrthographicCamera(
-    0, w,
-    h, 0,
-    -1000, 1000
-  );
-  activeCamera = orthoCamera;
-}
 
 /* -----------------------------
    MediaPipe 初期化
@@ -247,12 +250,12 @@ async function initPose() {
   poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
     baseOptions: {
       modelAssetPath:
-        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
-        //"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task",
-      delegate: "GPU"
+        //"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
+        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task",
+      delegate: "GPU",
     },
     runningMode: "VIDEO",
-    numPoses: 1
+    numPoses: 2
   });
 
   startVideoFile();
@@ -280,8 +283,8 @@ function startVideoFile() {
     video.src = URL.createObjectURL(file);
 
     video.onloadedmetadata = () => {
-      setupCameraForVideo();
       renderer.setSize(video.videoWidth, video.videoHeight, false);
+      setupCameraForVideo();
       activeCamera = orthoCamera; 
       video.play().then(updateLayout);
     };
@@ -343,11 +346,18 @@ function renderLoop() {
 
     if (result.landmarks && result.landmarks[0]) {
       const SCALE = 200;
-      const lm = result.landmarks[0];
-      updatePoseLandmarks(lm);
-    
-      const left = [11, 13, 15, 19, 23, 25, 27, 29, 31];
-      const right = [12, 14, 16, 20, 24, 26, 28, 30, 32];
+
+      const worldLm = result.worldLandmarks?.[0] ?? null;  // or result.worldLandmarks?.[0]
+      if (isPoseRotating3D && worldLm) {
+        // Use worldLm for 3D / filteredLm2 etc.
+        updatePoseLandmarks(worldLm);
+      } else {
+        console.log("worldlandmarks:", result.worldlandmarks);
+        updatePoseLandmarks(result.landmarks[0]);  // fallback
+      }
+
+      // const left = [11, 13, 15, 19, 23, 25, 27, 29, 31];
+      // const right = [12, 14, 16, 20, 24, 26, 28, 30, 32];
 
       const connections = [
         [7, 0], [0, 8],
@@ -377,25 +387,12 @@ function renderLoop() {
             posArray[5] = -p2.z * SCALE;
 
         } else {
-            const x1 = p1.x * video.videoWidth;
-            const y1 = p1.y * video.videoHeight;
-            const x2 = p2.x * video.videoWidth;
-            const y2 = p2.y * video.videoHeight;
-            /*posArray[0] = x1;
-            posArray[1] = ofseth + video.videoHeight - y1;
-            posArray[2] = 0;
-
-            posArray[3] = x2;
-            posArray[4] = ofseth + video.videoHeight - y2;
-            posArray[5] = 0; */
-
             posArray[0] = p1.x * displayW;;
-            posArray[1] = ofseth + displayH - p1.y * displayH;
+            posArray[1] = ofseth + ( 1- p1.y ) * displayH;
             posArray[2] = 0;
             posArray[3] = p2.x * displayW;;
-            posArray[4] = ofseth + displayH - p2.y * displayH;
+            posArray[4] = ofseth + ( 1 - p2.y ) * displayH;
             posArray[5] = 0;
-
         }
 
         // ★ Line2 用の更新
