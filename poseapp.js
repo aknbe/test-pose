@@ -303,6 +303,7 @@ function startVideoFile() {
       setupCameraForVideo();
       activeCamera = orthoCamera; 
       video.play().then(updateLayout);
+      footspeedmax = 0;
     };
   };
 }
@@ -365,7 +366,6 @@ function renderLoop() {
     const result = poseLandmarker.detectForVideo(video, now);
 
     if (result.landmarks && result.landmarks[0]) {
-
       const worldLm = result.worldLandmarks?.[0] ?? null;  // or result.worldLandmarks?.[0]
       if (isPoseRotating3D && worldLm) {
         // Use worldLm for 3D / filteredLm2 etc.
@@ -467,7 +467,9 @@ function renderLoop() {
         const dt = (now - lastTime) / 1000;
         speedVal = Math.max(leftPos.distanceTo(lastLeftPos),rightPos.distanceTo(lastRightPos)) / dt;
       }
-      footspeedmax = Math.max(footspeedmax,speedVal)
+      if (worldLm && video.currentTime > 0.2) {
+        footspeedmax = Math.max(footspeedmax,speedVal)
+      }
       lastLeftPos = leftPos.clone();
       lastRightPos = rightPos.clone();
       lastTime = now;
