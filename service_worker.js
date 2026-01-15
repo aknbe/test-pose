@@ -1,12 +1,13 @@
-// sw.js
+// service_worker.js
 const CACHE_NAME = 'pose-app-v1';  // バージョンを上げるとキャッシュ更新される
 const urlsToCache = [
   '/',                          // index.html（またはtest.html）
   '/test.html',
   '/kickposeapp2.js',
-  '/three.module.js',           // ローカルに置いた場合
+  //'/three.module.js',           // ローカルに置いた場合
   // CDNのものは事前にダウンロードしてローカルに置くか、または以下のように
-  // 'https://cdn.jsdelivr.net/npm/three@0.182/build/three.module.js',
+  'https://cdn.jsdelivr.net/npm/three@0.182/build/three.module.js',
+  'https://cdn.jsdelivr.net/npm/three@0.182/examples/jsm/',
   // MediaPipe関連（wasm + モデル）
   'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm/...',  // 必要なwasmファイル全部
   'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task'
