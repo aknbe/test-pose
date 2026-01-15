@@ -5,7 +5,7 @@ AI Pose Estimation × 3D Visualization Demo
 **2D オーバーレイ表示 / 3D 表示 / 軌跡可視化 / 足速度推定 / フィルタリング**  
 を行うデモアプリです。
 
-iPhone Safari / Android / PC ブラウザで動作します。
+iPhone Safari / Android / PC ブラウザで動作します(多分…)。
 
 ---
 
