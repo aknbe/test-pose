@@ -143,7 +143,7 @@ class Person {
     this.setVisible(true);
 
     const playbackRate = video.playbackRate;
-    const baseTau = 0.01;
+    const baseTau = 0.005;
     const tau = baseTau / playbackRate;
     const dt_mp = 1 / 30;
     let alpha = dt_mp / tau;
@@ -402,6 +402,8 @@ window.addEventListener("resize", updateLayout);
 /* -----------------------------
    Three.js 初期化
 ------------------------------ */
+let camyfromgrid;
+let endcontrol = true;
 function initThree() {
   renderer = new THREE.WebGLRenderer({ canvas, alpha: true });
   //renderer.setSize(window.innerWidth, window.innerHeight);
@@ -422,6 +424,7 @@ function initThree() {
 
   controls.addEventListener("start", () => {
     if (currentMode == 'video') {
+      endcontrol = false
       isPoseRotating3D = true;
       controls.target.set(0, 0, 0);
       controls.update();
@@ -435,6 +438,9 @@ function initThree() {
   });
 
   controls.addEventListener("end", () => {
+    camyfromgrid = perspectiveCamera.position.y - gridHelper.position.y;
+    endcontrol = true;
+    //console.log(`endcontrol cam.y: ${camyfromgrid} ${perspectiveCamera.position.y} ${gridHelper.position.y}`);
     //isPoseRotating3D = false;
     //updateLayout();
     //console.log(`Left foot Z: ${gridHelper.position}`);
@@ -649,6 +655,9 @@ function renderLoop(timestamp) {
             const miny = Math.min(-leftFoot.y, -rightFoot.y);
             const gridy = (miny + CENTER) * SCALE;
             gridHelper.position.set(0, gridy, 0);
+            if (endcontrol &&  typeof camyfromgrid === 'number') {
+              perspectiveCamera.position.y = Math.min(1500,camyfromgrid + gridy);
+            }
           }
         }
 
