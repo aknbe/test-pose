@@ -49,6 +49,22 @@ let rightTrailLine;
 let isPoseRotating3D = false;
 let currentMode = "video";
 
+let speedVal = 0; // 足先の速度推定
+let dt = 0;
+
+const connections = [
+  [7, 0], [0, 8],
+  [11, 13], [13, 15], [15, 19],
+  [12, 14], [14, 16], [16, 20],
+  [11, 12],
+  [23, 24],
+  [11, 23], [12, 24],
+  [23, 25], [25, 27], [27, 29], [29, 31],
+  [24, 26], [26, 28], [28, 30], [30, 32]
+];
+
+const positionsArray = new Float32Array(connections.length * 6);  // ライン数 × 2点 × 3次元
+
 function setStatus(msg) {
   if (statusElement) {
     statusElement.textContent = msg;
@@ -112,7 +128,7 @@ function updatePoseLandmarks(lm) {
   }
 }
 
-function ema(prev, x, alpha) {
+function ema(prev, x, alpha=0.3) {
   return prev != null ? prev * (1 - alpha) + x * alpha : x;
 }
 
@@ -179,7 +195,7 @@ function updateLayout() {
   const videoIsPortrait = video.videoHeight > video.videoWidth;
 
   if (screenIsPortrait === videoIsPortrait) {
-    if (isPoseRotating3D &&   currentMode == "video") {
+    if (isPoseRotating3D && currentMode == "video") {
       container.className = "small-video";
       return;
     } else {
@@ -208,7 +224,7 @@ function initThree() {
   perspectiveCamera  = new THREE.PerspectiveCamera(
     45,
     window.innerWidth / window.innerHeight,
-    0.1,
+    0.01,
     2000
   ); /* */
   perspectiveCamera.position.set(0, 0, 300);
@@ -219,15 +235,17 @@ function initThree() {
   controls.enableDamping = true;
 
   controls.addEventListener("start", () => {
-    isPoseRotating3D = true;
-    controls.target.set(0, 0, 0);
-    controls.update();
-    //perspectiveCamera.updateProjectionMatrix()
-    // lookat(0,0,0);
-    activeCamera = perspectiveCamera;
-    gridHelper.visible = true;
-    axesHelper.visible = true;
-    updateLayout();
+    if(currentMode =='video'){
+      isPoseRotating3D = true;
+      controls.target.set(0, 0, 0);
+      controls.update();
+      //perspectiveCamera.updateProjectionMatrix()
+      // lookat(0,0,0);
+      activeCamera = perspectiveCamera;
+      gridHelper.visible = true;
+      axesHelper.visible = true;
+      updateLayout();
+    }
   });
 
   controls.addEventListener("end", () => {
@@ -237,7 +255,7 @@ function initThree() {
   }); // 終了時は何もしない 
 
   /* 骨格ライン生成 */
-  const connections = [
+  /* const connections = [
     [7, 0], [0, 8],
     [11, 13], [13, 15],[15.19],
     [12, 14], [14, 16],[16,20],
@@ -246,7 +264,7 @@ function initThree() {
     [11, 23], [12, 24],
     [23, 25], [25, 27], [27, 29], [29.31],
     [24, 26], [26, 28], [28, 30], [30,32],
-  ];
+  ]; */
 
   const left = [13, 15, 19, 25, 27, 29, 31];
   const right = [14, 16, 20, 26, 28, 30, 32];
@@ -310,14 +328,21 @@ function initThree() {
 ------------------------------ */
 async function initPose(numPoses = 1) {
   const vision = await FilesetResolver.forVisionTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+    //"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm"
   );
-
+  
+  var modelurl = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task"
+  if (numPoses==1){
+    modelurl = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task"
+    // modelurl = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task"
+  } else {
+    modelurl = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task"
+    console.log(`numPoses: ${numPoses}`);
+  }
   poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
     baseOptions: {
-      modelAssetPath:
-        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
-        //"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task",
+      modelAssetPath: modelurl,
       delegate: "GPU",
     },
     runningMode: "VIDEO",
@@ -382,19 +407,6 @@ async function startCamera() {
 /* -----------------------------
    統合 renderLoop
 ------------------------------ */
-const connections = [
-  [7, 0], [0, 8],
-  [11, 13], [13, 15], [15, 19],
-  [12, 14], [14, 16], [16, 20],
-  [11, 12],
-  [23, 24],
-  [11, 23], [12, 24],
-  [23, 25], [25, 27], [27, 29], [29, 31],
-  [24, 26], [26, 28], [28, 30], [30, 32]
-];
-
-const positionsArray = new Float32Array(connections.length * 6);  // ライン数 × 2点 × 3次元
-
 function renderLoop(timestamp) {
   controls.update();
 
@@ -421,14 +433,12 @@ function renderLoop(timestamp) {
   }
 
   if (poseLandmarker && video.readyState >= 2) {
-    setStatus("");  // 空にしてもOK
     if (statusElement) {
+      setStatus("");  // 空にしてもOK
       statusElement.style.display = 'none';  // または statusElement.remove();
     }
     const now = performance.now();
     const result = poseLandmarker.detectForVideo(video, now);
-    /* const detectPromise = poseLandmarker.detectForVideo(video, now);
-    detectPromise.then(result => {       });       // 処理を非同期で実行 */
     if (result.landmarks && result.landmarks[0]) {
       const worldLm = result.worldLandmarks?.[0] ?? null;  // or result.worldLandmarks?.[0]
       if (isPoseRotating3D && worldLm) {
@@ -436,7 +446,7 @@ function renderLoop(timestamp) {
         updatePoseLandmarks(worldLm);
         var SCALE = 100;
         var CENTER = 0.0; // 腰部
-        console.log("use worldlandmarks:", result.worldlandmarks);
+        // console.log("use worldlandmarks:", result.worldlandmarks);
       } else {
         var SCALE = 200;
         var CENTER = 0.5; //画面
@@ -444,52 +454,6 @@ function renderLoop(timestamp) {
         updatePoseLandmarks(result.landmarks[0]);  // fallback
       }
 
-      /* const connections = [
-        [7, 0], [0, 8],
-        [11, 13], [13, 15], [15, 19],
-        [12, 14], [14, 16], [16, 20],
-        [11, 12],
-        [23, 24],
-        [11, 23], [12, 24],
-        [23, 25], [25, 27], [27, 29], [29, 31],
-        [24, 26], [26, 28], [28, 30], [30, 32]
-      ];
-
-      const positionsArray = new Float32Array(connections.length * 6);  // ライン数 × 2点 × 3次元
-
-      connections.forEach((pair, i) => {
-        const [a, b] = pair;
-        const p1 = filteredLm2[a];
-        const p2 = filteredLm2[b];
-        const line = skeletonLines[i];
-        const posArray = [];
-
-        if (isPoseRotating3D) {
-            posArray[0] = (p1.x - CENTER) * SCALE;
-            posArray[1] = (-p1.y + CENTER) * SCALE;
-            posArray[2] = -p1.z * SCALE;
-
-            posArray[3] = (p2.x - CENTER) * SCALE;
-            posArray[4] = (-p2.y + CENTER) * SCALE;
-            posArray[5] = -p2.z * SCALE;
-
-        } else {
-            posArray[0] = p1.x * displayW;;
-            posArray[1] = ofseth + ( 1- p1.y ) * displayH;
-            posArray[2] = 0;
-            posArray[3] = p2.x * displayW;;
-            posArray[4] = ofseth + ( 1 - p2.y ) * displayH;
-            posArray[5] = 0;
-        }
-
-        // ★ Line2 用の更新
-        line.geometry.setPositions(posArray);
-        // line.computeLineDistances();
-        // line.material.resolution.set(renderer.domElement.width, renderer.domElement.height);
-        line.material.needsUpdate = true;
-      });*/
-
-      // renderLoop内で
       connections.forEach((pair, i) => {
         const [a, b] = pair;
         const lmA = filteredLm2[a];
@@ -543,11 +507,9 @@ function renderLoop(timestamp) {
         -rightFoot.z
       );
 
-      let speedVal = 0; // 足先の速度推定
-      let dt = 0;
+      /* Foot Speed */
       const rawTime = video.currentTime;
-      // 二次遅れフィルタ
-      const { y1, y2 } = lowpass2s(t1, t2, rawTime, 0.03)
+      const { y1, y2 } = lowpass2s(t1, t2, rawTime, 0.03) // 二次遅れフィルタ
       t1 = y1; t2 = y2;
 
       if (prevT != null) {        // 🔥 巻き戻り（ループ再生）を検出
@@ -562,7 +524,9 @@ function renderLoop(timestamp) {
         prevT = y2;
       }
       if (lastLeftPos && ((dt ?? 0) > 1e-3)) {
-          speedVal = Math.max(leftPos.distanceTo(lastLeftPos),rightPos.distanceTo(lastRightPos)) / dt;
+        const speedvalprev = speedVal;
+        speedVal = Math.max(leftPos.distanceTo(lastLeftPos),rightPos.distanceTo(lastRightPos)) / dt;
+        speedVal =  ema(speedvalprev, speedVal, 0.5)
       }
       // console.log("dt:", dt, "dte:", y1,y2);
 
@@ -577,20 +541,18 @@ function renderLoop(timestamp) {
       } else {
         dtprev1 = 0;dtprev2= 0;
       }
+      lastTime = video.currentTime;  //now;
         */
       if (worldLm && video.currentTime > 0.05) {
         footspeedmax = Math.max(footspeedmax,speedVal)
       }
       lastLeftPos = leftPos.clone();
       lastRightPos = rightPos.clone();
-      lastTime = video.currentTime;  //now;
 
-      if (isPoseRotating3D) {
-        // ★ 3D 表示用
+      if (isPoseRotating3D) { // ★ 3D 表示用
         leftPos.multiplyScalar(SCALE);
         rightPos.multiplyScalar(SCALE); 
-      } else {
-        // ★ 2D オーバーレイ用
+      } else {        // ★ 2D オーバーレイ用
         const lx = leftFoot.x * displayW;
         const ly = ofseth + (1 - leftFoot.y) * displayH;
         const rx = rightFoot.x * displayW;
@@ -643,7 +605,16 @@ function renderLoop(timestamp) {
 /* -----------------------------
    UI
 ------------------------------ */
-cameraBtn.onclick = () => startCamera();
+cameraBtn.onclick = () => {
+  isPoseRotating3D = false;   // ★ 3D 回転状態をリセット
+  controls.reset();   // ★ OrbitControls を初期化
+  gridHelper.visible = false;
+  axesHelper.visible = false;
+  footspeedmax = 0;
+  updateLayout();   // ★ small-video を解除
+  startCamera();
+  activeCamera = orthoCamera;   // ★ カメラをオーバーレイ用に戻す
+}
 videoBtn.onclick = () => {
   isPoseRotating3D = false;   // ★ 3D 回転状態をリセット
   controls.reset();   // ★ OrbitControls を初期化
@@ -710,6 +681,7 @@ if (numPosesSelect) {
       // ファイルモードの場合
       video.play().catch(e => console.error(e));
     }
+    setStatus(`Select Movie File`);
   });
 }
 
