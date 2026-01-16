@@ -2,8 +2,8 @@
 const CACHE_NAME = 'pose-app-v1';  // バージョンを上げるとキャッシュ更新される
 const urlsToCache = [
   '/',                          // index.html（またはtest.html）
-  '/test.html',
-  '/kickposeapp2.js',
+  './test.html',
+  './poseapp.js',
   //'/three.module.js',           // ローカルに置いた場合
   // CDNのものは事前にダウンロードしてローカルに置くか、または以下のように
   'https://cdn.jsdelivr.net/npm/three@0.182/build/three.module.js',
