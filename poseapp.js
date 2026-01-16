@@ -24,6 +24,9 @@ const speedLabel = document.getElementById("speedLabel");
 
 const statusElement = document.getElementById('loading-status');
 
+let persons = [];
+const MAX_PERSONS = 5;
+
 let poseLandmarker;
 let currentNumPoses = 1;  // 初期値
 let scene, renderer, controls;
@@ -31,26 +34,8 @@ let orthoCamera;
 let perspectiveCamera;
 let activeCamera;
 
-let filteredLm1 = null; // 一次フィルタ
-let filteredLm2 = null; // 二次フィルタ（最終出力）
-
-let skeletonLines = [];
-let lastTime = 0;
-let lastLeftPos = null;
-let lastRightPos = null;
-let footspeedmax = 0.0;
-
-let leftTrailPoints = [];
-let rightTrailPoints = [];
-
-let leftTrailLine;
-let rightTrailLine;
-
 let isPoseRotating3D = false;
 let currentMode = "video";
-
-let speedVal = 0; // 足先の速度推定
-let dt = 0;
 
 const connections = [
   [7, 0], [0, 8],
@@ -63,19 +48,242 @@ const connections = [
   [24, 26], [26, 28], [28, 30], [30, 32]
 ];
 
-const positionsArray = new Float32Array(connections.length * 6);  // ライン数 × 2点 × 3次元
+class Person {
+  constructor(scene, id) {
+    this.scene = scene;
+    this.id = id;
+    this.skeletonLines = [];
+    this.filteredLm1 = null;
+    this.filteredLm2 = null;
+    this.demalm = null;
+
+    // 足の速度計用
+    this.lastLeftPos = null;
+    this.lastRightPos = null;
+    this.t1 = null;
+    this.t2 = null;
+    this.prevT = null;
+    this.speedVal = 0;
+    this.footSpeedMax = 0;
+
+    // 軌跡用
+    this.leftTrailPoints = [];
+    this.rightTrailPoints = [];
+    this.leftTrailLine = null;
+    this.rightTrailLine = null;
+
+    this.positionsArray = new Float32Array(connections.length * 6);
+    this.initThreeObjects();
+  }
+
+  initThreeObjects() {
+    const left = [13, 15, 19, 25, 27, 29, 31];
+    const right = [14, 16, 20, 26, 28, 30, 32];
+
+    connections.forEach((pair) => {
+      const [a, b] = pair;
+      let color = 0xffff00; // 胴体
+
+      if (left.includes(a) || left.includes(b)) color = 0xffaa00;
+      if (right.includes(a) || right.includes(b)) color = 0x00ffff;
+
+      const material = new LineMaterial({
+        color: color,
+        linewidth: 3.0,
+        resolution: new THREE.Vector2(window.innerWidth, window.innerHeight)
+      });
+
+      const geometry = new LineGeometry();
+      const line = new Line2(geometry, material);
+      line.visible = false;
+
+      this.scene.add(line);
+      this.skeletonLines.push(line);
+    });
+
+    // 左足の軌跡
+    const leftTrailGeometry = new THREE.BufferGeometry();
+    this.leftTrailLine = new THREE.Line(
+      leftTrailGeometry,
+      new THREE.LineBasicMaterial({ color: 0xff0000 })
+    );
+    this.leftTrailLine.visible = false;
+    this.scene.add(this.leftTrailLine);
+
+    // 右足の軌跡
+    const rightTrailGeometry = new THREE.BufferGeometry();
+    this.rightTrailLine = new THREE.Line(
+      rightTrailGeometry,
+      new THREE.LineBasicMaterial({ color: 0x0000ff })
+    );
+    this.rightTrailLine.visible = false;
+    this.scene.add(this.rightTrailLine);
+  }
+
+  updatePoseLandmarks(lm, alpha) {
+    if (!this.filteredLm1) {
+      this.filteredLm1 = lm.map(p => ({ x: p.x, y: p.y, z: p.z }));
+      this.filteredLm2 = lm.map(p => ({ x: p.x, y: p.y, z: p.z }));
+      this.demalm = lm.map(p => ({ x: p.x, y: p.y, z: p.z }));
+      return;
+    }
+
+    for (let i = 0; i < lm.length; i++) {
+      //const { y1, y2 } = lowpass2(this.filteredLm1[i], this.filteredLm2[i], lm[i], alpha);
+      //this.filteredLm1[i] = y1;
+      //this.filteredLm2[i] = y2;
+      const { ema1, ema2, dema } = demaVec(this.filteredLm1[i], this.filteredLm2[i], lm[i], alpha);
+      this.filteredLm1[i] = ema1;
+      this.filteredLm2[i] = ema2;
+      this.demalm[i] = dema;
+    }
+  }
+
+  update(landmarks, worldLandmarks, is3D, displayW, displayH, ofseth, center, scale, currentTime) {
+    this.setVisible(true);
+
+    const playbackRate = video.playbackRate;
+    const baseTau = 0.01;
+    const tau = baseTau / playbackRate;
+    const dt_mp = 1 / 30;
+    let alpha = dt_mp / tau;
+    if (alpha > 1) alpha = 1;
+
+    // ポーズデータのフィルタリング
+    if (is3D && worldLandmarks) {
+      this.updatePoseLandmarks(worldLandmarks, alpha);
+    } else {
+      this.updatePoseLandmarks(landmarks, alpha);
+    }
+
+    if (!this.demalm) return;
+
+    // 線データの作成
+    connections.forEach((pair, i) => {
+      const [a, b] = pair;
+      const lmA = this.demalm[a];
+      const lmB = this.demalm[b];
+      if (!lmA || !lmB) return;
+
+      const baseIdx = i * 6;
+      if (is3D) {
+        this.positionsArray[baseIdx + 0] = (lmA.x - center) * scale;
+        this.positionsArray[baseIdx + 1] = (-lmA.y + center) * scale;
+        this.positionsArray[baseIdx + 2] = -lmA.z * scale;
+        this.positionsArray[baseIdx + 3] = (lmB.x - center) * scale;
+        this.positionsArray[baseIdx + 4] = (-lmB.y + center) * scale;
+        this.positionsArray[baseIdx + 5] = -lmB.z * scale;
+      } else {
+        this.positionsArray[baseIdx + 0] = lmA.x * displayW;
+        this.positionsArray[baseIdx + 1] = (1 - lmA.y) * displayH + ofseth;
+        this.positionsArray[baseIdx + 2] = 0;
+        this.positionsArray[baseIdx + 3] = lmB.x * displayW;
+        this.positionsArray[baseIdx + 4] = (1 - lmB.y) * displayH + ofseth;
+        this.positionsArray[baseIdx + 5] = 0;
+      }
+    });
+
+    // 線の更新
+    this.skeletonLines.forEach((line, i) => {
+      const start = i * 6;
+      line.geometry.setPositions(this.positionsArray.subarray(start, start + 6));
+      line.geometry.attributes.position.needsUpdate = true;
+    });
+
+    // 足の速度計算
+    const leftFoot = this.demalm[31];
+    const rightFoot = this.demalm[32];
+    if (leftFoot && rightFoot) {
+      const leftPos = new THREE.Vector3((leftFoot.x - center), (-leftFoot.y + center), -leftFoot.z);
+      const rightPos = new THREE.Vector3((rightFoot.x - center), (-rightFoot.y + center), -rightFoot.z);
+
+      const { y1, y2 } = lowpass2s(this.t1, this.t2, currentTime, 0.03);
+      this.t1 = y1; this.t2 = y2;
+
+      let dt = 0;
+      if (this.prevT != null) {
+        if (y2 < this.prevT - 0.1) {
+          this.prevT = y2;
+        } else {
+          dt = y2 - this.prevT;
+          this.prevT = y2;
+        }
+      } else {
+        this.prevT = y2;
+      }
+
+      if (this.lastLeftPos && dt > 1e-3) {
+        const speedvalprev = this.speedVal;
+        const currentSpeed = Math.max(leftPos.distanceTo(this.lastLeftPos), rightPos.distanceTo(this.lastRightPos)) / dt;
+        this.speedVal = ema(speedvalprev, currentSpeed, 0.5);
+      }
+      if (worldLandmarks && currentTime > 0.05) {
+        this.footSpeedMax = Math.max(this.footSpeedMax, this.speedVal);
+      }
+      this.lastLeftPos = leftPos.clone();
+      this.lastRightPos = rightPos.clone();
+
+      // 軌跡の更新
+      let trailLeft, trailRight;
+      if (is3D) {
+        trailLeft = leftPos.clone().multiplyScalar(scale);
+        trailRight = rightPos.clone().multiplyScalar(scale);
+      } else {
+        trailLeft = new THREE.Vector3(leftFoot.x * displayW, ofseth + (1 - leftFoot.y) * displayH, 0);
+        trailRight = new THREE.Vector3(rightFoot.x * displayW, ofseth + (1 - rightFoot.y) * displayH, 0);
+      }
+
+      this.leftTrailPoints.push(trailLeft);
+      this.rightTrailPoints.push(trailRight);
+      if (this.leftTrailPoints.length > 60) this.leftTrailPoints.shift();
+      if (this.rightTrailPoints.length > 60) this.rightTrailPoints.shift();
+
+      const leftArray = [];
+      this.leftTrailPoints.forEach(p => leftArray.push(p.x, p.y, p.z));
+      this.leftTrailLine.geometry.setAttribute("position", new THREE.Float32BufferAttribute(leftArray, 3));
+      this.leftTrailLine.geometry.attributes.position.needsUpdate = true;
+
+      const rightArray = [];
+      this.rightTrailPoints.forEach(p => rightArray.push(p.x, p.y, p.z));
+      this.rightTrailLine.geometry.setAttribute("position", new THREE.Float32BufferAttribute(rightArray, 3));
+      this.rightTrailLine.geometry.attributes.position.needsUpdate = true;
+    }
+  }
+
+  setVisible(visible) {
+    this.skeletonLines.forEach(l => l.visible = visible);
+    this.leftTrailLine.visible = visible;
+    this.rightTrailLine.visible = visible;
+  }
+
+  reset() {
+    this.filteredLm1 = null;
+    this.filteredLm2 = null;
+    this.demalm = null;
+    this.lastLeftPos = null;
+    this.lastRightPos = null;
+    this.t1 = null;
+    this.t2 = null;
+    this.prevT = null;
+    this.speedVal = 0;
+    this.footSpeedMax = 0;
+    this.leftTrailPoints = [];
+    this.rightTrailPoints = [];
+    // 軌跡をクリアするためにダミーの空属性をセット
+    this.leftTrailLine.geometry.setAttribute("position", new THREE.Float32BufferAttribute([], 3));
+    this.rightTrailLine.geometry.setAttribute("position", new THREE.Float32BufferAttribute([], 3));
+    this.setVisible(false);
+  }
+}
 
 function setStatus(msg) {
   if (statusElement) {
     statusElement.textContent = msg;
   }
-  console.log("[STATUS]", msg);  // デバッグ用にも
+  console.log("[STATUS]", msg);
 }
 
 function lowpass2(prev1, prev2, next, alpha = 0.25) {
-  // prev1: 一次フィルタの前回値
-  // prev2: 二次フィルタの前回値
-  // next: 新しい入力値（x,y,z）
   const y1 = {
     x: prev1 ? prev1.x * (1 - alpha) + next.x * alpha : next.x,
     y: prev1 ? prev1.y * (1 - alpha) + next.y * alpha : next.y,
@@ -89,13 +297,9 @@ function lowpass2(prev1, prev2, next, alpha = 0.25) {
   return { y1, y2 };
 }
 
-let t1 = null;   // 一次フィルタの前回値
-let t2 = null;   // 二次フィルタの前回値（最終出力）
-let prevT = null; // 平滑化後の前回値
-
 function lowpass2s(prev1, prev2, next, tau = 0.015) {
-  const tauplayback = tau / video.playbackRate; // 再生速度に応じて時定数をスケール
-  const dt = 1 / 30; // MediaPipe のフレーム周期
+  const tauplayback = tau / video.playbackRate;
+  const dt = 1 / 30;
   let alpha = dt / tauplayback;
   if (alpha > 1) alpha = 1;
   const y1 = prev1 != null ? prev1 * (1 - alpha) + next * alpha : next;
@@ -103,32 +307,7 @@ function lowpass2s(prev1, prev2, next, tau = 0.015) {
   return { y1, y2 };
 }
 
-function updatePoseLandmarks(lm) {
-  const playbackRate = video.playbackRate;
-
-  const baseTau = 0.015; // 20ms
-  const tau = baseTau / playbackRate; // 再生速度に応じて時定数をスケール
-
-  const dt = 1 / 30; // MediaPipe のフレーム周期
-  let alpha = dt / tau;
-
-  // α が 1 を超えないように制限
-  if (alpha > 1) alpha = 1;
-
-  if (!filteredLm1) {
-    filteredLm1 = lm.map(p => ({ x: p.x, y: p.y, z: p.z }));
-    filteredLm2 = lm.map(p => ({ x: p.x, y: p.y, z: p.z }));
-    return;
-  }
-
-  for (let i = 0; i < lm.length; i++) {
-    const { y1, y2 } = lowpass2(filteredLm1[i], filteredLm2[i], lm[i], alpha);
-    filteredLm1[i] = y1;
-    filteredLm2[i] = y2;
-  }
-}
-
-function ema(prev, x, alpha=0.3) {
+function ema(prev, x, alpha = 0.3) {
   return prev != null ? prev * (1 - alpha) + x * alpha : x;
 }
 
@@ -209,6 +388,13 @@ function updateLayout() {
   if (!isPoseRotating3D && orthoCamera && video.videoWidth > 0) {
     setupCameraForVideo();
   }
+
+  // 全員の解像度を更新
+  persons.forEach(p => {
+    p.skeletonLines.forEach(l => {
+      l.material.resolution.set(renderer.domElement.width, renderer.domElement.height);
+    });
+  });
 }
 
 window.addEventListener("resize", updateLayout);
@@ -221,7 +407,7 @@ function initThree() {
   //renderer.setSize(window.innerWidth, window.innerHeight);
 
   scene = new THREE.Scene();
-  perspectiveCamera  = new THREE.PerspectiveCamera(
+  perspectiveCamera = new THREE.PerspectiveCamera(
     45,
     window.innerWidth / window.innerHeight,
     0.01,
@@ -235,7 +421,7 @@ function initThree() {
   controls.enableDamping = true;
 
   controls.addEventListener("start", () => {
-    if(currentMode =='video'){
+    if (currentMode == 'video') {
       isPoseRotating3D = true;
       controls.target.set(0, 0, 0);
       controls.update();
@@ -251,76 +437,26 @@ function initThree() {
   controls.addEventListener("end", () => {
     //isPoseRotating3D = false;
     //updateLayout();
-    console.log(`Left foot Z: ${gridHelper.position}`);
-  }); // 終了時は何もしない 
-
-  /* 骨格ライン生成 */
-  /* const connections = [
-    [7, 0], [0, 8],
-    [11, 13], [13, 15],[15.19],
-    [12, 14], [14, 16],[16,20],
-    [11, 12],
-    [23, 24],
-    [11, 23], [12, 24],
-    [23, 25], [25, 27], [27, 29], [29.31],
-    [24, 26], [26, 28], [28, 30], [30,32],
-  ]; */
-
-  const left = [13, 15, 19, 25, 27, 29, 31];
-  const right = [14, 16, 20, 26, 28, 30, 32];
-
-  connections.forEach((pair, i) => {
-    const [a, b] = pair;
-    // ★ 左右の部位で色を決める
-    let color = 0xffff00; // デフォルト（胴体）
-
-    if (left.includes(a)) color = 0xffaa00;     // 左側（例：オレンジ）
-    if (left.includes(b)) color = 0xffaa00;     // 左側（例：オレンジ）
-    if (right.includes(a)) color = 0x00ffff;    // 右側（例：水色）
-    if (right.includes(b)) color = 0x00ffff;    // 右側（例：水色）
-
-    // ★ LineMaterial をラインごとに作る
-    const material = new LineMaterial({
-        color: color,
-        linewidth: 3.0,
-        resolution: new THREE.Vector2(renderer.domElement.width, renderer.domElement.height)
-    });
-
-    const geometry = new LineGeometry();
-    const line = new Line2(geometry, material);
-
-    scene.add(line);
-    skeletonLines.push(line);
+    //console.log(`Left foot Z: ${gridHelper.position}`);
   });
 
-  // 左足の軌跡（赤）
-  const leftTrailGeometry = new THREE.BufferGeometry();
-  leftTrailLine = new THREE.Line(
-    leftTrailGeometry,
-    new THREE.LineBasicMaterial({ color: 0xff0000 })
-  );
-  scene.add(leftTrailLine);
-
-  // 右足の軌跡（青）
-  const rightTrailGeometry = new THREE.BufferGeometry();
-  rightTrailLine = new THREE.Line(
-    rightTrailGeometry,
-    new THREE.LineBasicMaterial({ color: 0x0000ff })
-  );
-  scene.add(rightTrailLine);
+  /* 複数人分のスケルトンを初期化 */
+  for (let i = 0; i < MAX_PERSONS; i++) {
+    persons.push(new Person(scene, i));
+  }
 
   // === 3D 用の地平面と XYZ 軸 ===
-    const grid = new THREE.GridHelper(400, 20, 0x444444, 0x888888);
-    grid.visible = false; // 初期状態は非表示（2D のため）
-    scene.add(grid);
+  const grid = new THREE.GridHelper(400, 20, 0x444444, 0x888888);
+  grid.visible = false; // 初期状態は非表示（2D のため）
+  scene.add(grid);
 
-    const axes = new THREE.AxesHelper(200);
-    axes.visible = false; // 初期状態は非表示
-    scene.add(axes);
+  const axes = new THREE.AxesHelper(200);
+  axes.visible = false; // 初期状態は非表示
+  scene.add(axes);
 
-    // 後で参照できるようにグローバルへ
-    window.gridHelper = grid;
-    window.axesHelper = axes;
+  // 後で参照できるようにグローバルへ
+  window.gridHelper = grid;
+  window.axesHelper = axes;
 }
 
 /* -----------------------------
@@ -331,9 +467,9 @@ async function initPose(numPoses = 1) {
     //"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm"
   );
-  
+
   var modelurl = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task"
-  if (numPoses==1){
+  if (numPoses == 1) {
     modelurl = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task"
     // modelurl = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task"
   } else {
@@ -376,9 +512,9 @@ function startVideoFile() {
     video.onloadedmetadata = () => {
       renderer.setSize(video.videoWidth, video.videoHeight, false);
       setupCameraForVideo();
-      activeCamera = orthoCamera; 
+      activeCamera = orthoCamera;
       video.play().then(updateLayout);
-      footspeedmax = 0;
+      persons.forEach(p => p.reset());
       playPauseBtn.textContent = "⏸";
     };
   };
@@ -387,20 +523,22 @@ function startVideoFile() {
 /* -----------------------------
    カメラモード
 ------------------------------ */
+let stream = null;
+let mediaRecorder;
 async function startCamera() {
   currentMode = "camera";
-
   video.src = "";
   video.srcObject = null;
 
-  const stream = await navigator.mediaDevices.getUserMedia({
+  const newStream = await navigator.mediaDevices.getUserMedia({
     video: {
-      facingMode: {ideal: "environment"},
+      facingMode: { ideal: "environment" },
       frameRate: { ideal: 60, max: 60 },
     },
     audio: false
   });
 
+  stream = newStream; // グローバル変数に保存
   video.srcObject = stream;
   video.onloadedmetadata = () => {
     video.play().then(updateLayout);
@@ -408,8 +546,11 @@ async function startCamera() {
   playPauseBtn.textContent = "🔴";
 }
 /* 録画停止 */
-let mediaRecorder;
 function startRecording() {
+  if (!stream) {
+    setStatus("録画はカメラモードでのみ可能です");
+    return;
+  }
   recordedChunks = [];
   mediaRecorder = new MediaRecorder(stream, {
     mimeType: "video/webm;codecs=vp9"
@@ -425,6 +566,10 @@ function startRecording() {
 }
 
 function stopRecording() {
+  if (!mediaRecorder) {
+    setStatus("録画は開始されていません");
+    return;
+  }
   mediaRecorder.stop();
   playPauseBtn.textContent = "🔴";
   console.log("録画終了");
@@ -432,12 +577,13 @@ function stopRecording() {
   mediaRecorder.onstop = () => {
     const blob = new Blob(recordedChunks, { type: "video/webm" });
     const url = URL.createObjectURL(blob);
-
-    // ダウンロードリンクを作る例
     const a = document.createElement("a");
     a.href = url;
-    a.download = "recorded.webm";
+    a.download = "recorded_" + new Date().toISOString().replace(/[:.]/g, '-') + ".webm";
     a.click();
+    URL.revokeObjectURL(url);
+    mediaRecorder = null;
+    recordedChunks = [];
   };
 }
 
@@ -447,195 +593,75 @@ function stopRecording() {
 function renderLoop(timestamp) {
   controls.update();
 
-  var videoRatio = video.videoWidth / video.videoHeight;
-  var dispwidth = video.offsetWidth, dispheight = video.offsetHeight;
-  var elementRatio = dispwidth/dispheight;
-  //var ofseth = (video.offsetHeight - dispheight) / 2
-  // If the video element is short and wide
-  if(elementRatio > videoRatio) dispwidth = dispheight * videoRatio;
-  // It must be tall and thin, or exactly equal to the original ratio
-  else dispheight = dispwidth / videoRatio;
-
-  // iPhone Safari 判定
   const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
   const videoRect = video.getBoundingClientRect();
   const containerRect = container.getBoundingClientRect();
   const ofseth = videoRect.top - containerRect.top;
+  let displayW, displayH;
+
   if (isIOS) {
-    var displayW = videoRect.width;
-    var displayH = videoRect.height;
+    displayW = videoRect.width;
+    displayH = videoRect.height;
   } else {
-    var displayW = video.videoWidth;
-    var displayH = video.videoHeight;
+    displayW = video.videoWidth;
+    displayH = video.videoHeight;
   }
 
   if (poseLandmarker && video.readyState >= 2) {
-    if (statusElement) {
-      setStatus("");  // 空にしてもOK
-      statusElement.style.display = 'none';  // または statusElement.remove();
+    if (statusElement && statusElement.style.display != 'none') {
+      setStatus("");
+      statusElement.style.display = 'none';
     }
     const now = performance.now();
     const result = poseLandmarker.detectForVideo(video, now);
-    if (result.landmarks && result.landmarks[0]) {
-      const worldLm = result.worldLandmarks?.[0] ?? null;  // or result.worldLandmarks?.[0]
-      if (isPoseRotating3D && worldLm) {
-        // Use worldLm for 3D / filteredLm2 etc.
-        updatePoseLandmarks(worldLm);
-        var SCALE = 100;
-        var CENTER = 0.0; // 腰部
-        // console.log("use worldlandmarks:", result.worldlandmarks);
-      } else {
-        var SCALE = 200;
-        var CENTER = 0.5; //画面
-        // console.log("not worldlandmarks:", result.worldlandmarks);
-        updatePoseLandmarks(result.landmarks[0]);  // fallback
-      }
-      
-      connections.forEach((pair, i) => {
-        const [a, b] = pair;
-        const lmA = filteredLm2[a];
-        const lmB = filteredLm2[b];
 
-        const baseIdx = i * 6;
-        if (isPoseRotating3D) {
-          positionsArray[baseIdx + 0] = (lmA.x - CENTER) * SCALE;
-          positionsArray[baseIdx + 1] = (-lmA.y + CENTER) * SCALE;
-          positionsArray[baseIdx + 2] = -lmA.z * SCALE;
-          positionsArray[baseIdx + 3] = (lmB.x - CENTER) * SCALE;
-          positionsArray[baseIdx + 4] = (-lmB.y  + CENTER) * SCALE;;
-          positionsArray[baseIdx + 5] = -lmB.z * SCALE;
-        }else{
-          positionsArray[baseIdx + 0] = lmA.x * displayW;
-          positionsArray[baseIdx + 1] = (1-lmA.y) * displayH + ofseth;
-          positionsArray[baseIdx + 2] = 0;
-          positionsArray[baseIdx + 3] = lmB.x * displayW;
-          positionsArray[baseIdx + 4] = (1-lmB.y) * displayH + ofseth;
-          positionsArray[baseIdx + 5] = 0;
+    // 全員を一旦非表示にする
+    persons.forEach(p => p.setVisible(false));
+
+    if (result.landmarks && result.landmarks.length > 0) {
+      let debugText = `FPS: ${Math.round(1000 / (performance.now() - now))}\n`;
+
+      const SCALE = isPoseRotating3D ? 100 : 200;
+      const CENTER = isPoseRotating3D ? 0.0 : 0.5;
+
+      result.landmarks.forEach((landmarks, idx) => {
+        if (idx >= MAX_PERSONS) return;
+        const worldLandmarks = result.worldLandmarks?.[idx] ?? null;
+        const person = persons[idx];
+
+        person.update(
+          landmarks,
+          worldLandmarks,
+          isPoseRotating3D,
+          displayW,
+          displayH,
+          ofseth,
+          CENTER,
+          SCALE,
+          video.currentTime
+        );
+
+        if (idx === 0) {
+          // 1人目の足元に合わせてグリッドを動かす
+          const leftFoot = person.filteredLm2?.[31];
+          const rightFoot = person.filteredLm2?.[32];
+          if (leftFoot && rightFoot) {
+            const miny = Math.min(-leftFoot.y, -rightFoot.y);
+            const gridy = (miny + CENTER) * SCALE;
+            gridHelper.position.set(0, gridy, 0);
+          }
         }
+
+        debugText += `[P${idx}] Speed: ${person.speedVal.toFixed(2)} max: ${person.footSpeedMax.toFixed(2)} m/s\n`;
       });
 
-      // 最後に一括更新
-      skeletonLines.forEach((line, i) => {
-        const start = i * 6;
-        line.geometry.setPositions(positionsArray.subarray(start, start + 6));
-        line.geometry.attributes.position.needsUpdate = true;
-      });
-
-      // 左右のつま先ランドマーク
-      const leftFoot = filteredLm2[31];
-      const rightFoot = filteredLm2[32];
-
-      if (leftFoot && rightFoot) {
-        const miny = Math.min(-leftFoot.y, -rightFoot.y);
-        const gridy = (miny+CENTER) * SCALE ;//+ 50;  // +50 is an offset to ensure visibility
-        gridHelper.position.set(0, gridy, 0);
-        //console.log(`Left foot Z: ${-leftFoot.z}, Right foot Z: ${-rightFoot.z}, Min Z: ${minZ}`);
-      }
-
-      let leftPos, rightPos;
-      leftPos = new THREE.Vector3(
-        (leftFoot.x - CENTER) ,
-        (-leftFoot.y + CENTER) ,
-        -leftFoot.z 
-      );
-      rightPos = new THREE.Vector3(
-        (rightFoot.x - CENTER) ,
-        (-rightFoot.y + CENTER) ,
-        -rightFoot.z
-      );
-
-      /* Foot Speed */
-      const rawTime = video.currentTime;
-      const { y1, y2 } = lowpass2s(t1, t2, rawTime, 0.03) // 二次遅れフィルタ
-      t1 = y1; t2 = y2;
-
-      if (prevT != null) {        // 🔥 巻き戻り（ループ再生）を検出
-        if (y2 < prevT - 0.1) { // 0.1秒以上戻ったら「ループした」と判断
-          dt = 0;          // 距離計算をリセット
-          prevT = y2;      // 新しいスタート地点に更新
-        } else {          // 通常の dt 計算
-          dt = y2 - prevT;
-          prevT = y2;
-        }
-      } else {
-        prevT = y2;
-      }
-      if (lastLeftPos && ((dt ?? 0) > 1e-3)) {
-        const speedvalprev = speedVal;
-        speedVal = Math.max(leftPos.distanceTo(lastLeftPos),rightPos.distanceTo(lastRightPos)) / dt;
-        speedVal =  ema(speedvalprev, speedVal, 0.5)
-      }
-      // console.log("dt:", dt, "dte:", y1,y2);
-
-      /* const {y1,y2} = lowpass2s(dtprev1, dtprev2, video.currentTime) ;
-      const dt = dtprev2 - y2 ;
-      dtprev1 = y1; dtprev2 = y2;
-      if (dtprev2<1e-3 || video.currentTime >= dtprev2){
-        if (lastLeftPos && ((dt ?? 0) > 1e-3)) {
-          // const dt = (now - lastTime) / 1000;
-          speedVal = Math.max(leftPos.distanceTo(lastLeftPos),rightPos.distanceTo(lastRightPos)) / dt;
-        }
-      } else {
-        dtprev1 = 0;dtprev2= 0;
-      }
-      lastTime = video.currentTime;  //now;
-        */
-      if (worldLm && video.currentTime > 0.05) {
-        footspeedmax = Math.max(footspeedmax,speedVal)
-      }
-      lastLeftPos = leftPos.clone();
-      lastRightPos = rightPos.clone();
-
-      if (isPoseRotating3D) { // ★ 3D 表示用
-        leftPos.multiplyScalar(SCALE);
-        rightPos.multiplyScalar(SCALE); 
-      } else {        // ★ 2D オーバーレイ用
-        const lx = leftFoot.x * displayW;
-        const ly = ofseth + (1 - leftFoot.y) * displayH;
-        const rx = rightFoot.x * displayW;
-        const ry = ofseth + (1 - rightFoot.y) * displayH;
-        leftPos = new THREE.Vector3(lx, ly, 0);
-        rightPos = new THREE.Vector3(rx, ry, 0);
-      }
-
-      // ★ 軌跡に追加
-      leftTrailPoints.push(leftPos.clone());
-      rightTrailPoints.push(rightPos.clone());
-
-      if (leftTrailPoints.length > 60) leftTrailPoints.shift();
-      if (rightTrailPoints.length > 60) rightTrailPoints.shift();
-
-      // ★ 左足ライン更新
-      const leftArray = [];
-      leftTrailPoints.forEach(p => leftArray.push(p.x, p.y, p.z));
-      /*leftTrailLine.geometry.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(leftArray,3)
-      );*/
-      const positionAttributel = new THREE.Float32BufferAttribute(leftArray, 3);
-      leftTrailLine.geometry.setAttribute("position", positionAttributel);
-      leftTrailLine.geometry.attributes.position.needsUpdate = true;
-      // ★ 右足ライン更新
-      const rightArray = [];
-      rightTrailPoints.forEach(p => rightArray.push(p.x, p.y, p.z));
-      /*rightTrailLine.geometry.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(rightArray, 3)
-      );*/
-      const positionAttributer = new THREE.Float32BufferAttribute(rightArray, 3);
-      rightTrailLine.geometry.setAttribute("position", positionAttributer);
-      rightTrailLine.geometry.attributes.position.needsUpdate = true;
-
-      debug.textContent =
-        `FPS: ${Math.round(1000 / (performance.now() - now))}\n` +
-        `Foot speed: ${speedVal.toFixed(2)} max: ${footspeedmax.toFixed(2)} m/s\n` +
-        `Speed: ${video.playbackRate.toFixed(1)}x\n` +
+      debugText += `Speed: ${video.playbackRate.toFixed(1)}x\n` +
         `Time: ${video.currentTime.toFixed(2)} / ${video.duration.toFixed(2)}\n` +
-        //`container: ${container.className}\n` +
-        `vide WH ofs: ${displayW.toFixed(1)} ${displayH.toFixed(1)} ${ofseth.toFixed(1)}`;
+        `WH ofs: ${displayW.toFixed(1)} ${displayH.toFixed(1)} ${ofseth.toFixed(1)}`;
+      debug.textContent = debugText;
     }
     renderer.render(scene, activeCamera);
-  } 
+  }
   requestAnimationFrame(renderLoop);
 }
 
@@ -643,29 +669,29 @@ function renderLoop(timestamp) {
    UI
 ------------------------------ */
 cameraBtn.onclick = () => {
-  isPoseRotating3D = false;   // ★ 3D 回転状態をリセット
-  controls.reset();   // ★ OrbitControls を初期化
+  isPoseRotating3D = false;
+  controls.reset();
   gridHelper.visible = false;
   axesHelper.visible = false;
-  footspeedmax = 0;
-  updateLayout();   // ★ small-video を解除
+  persons.forEach(p => p.reset());
+  updateLayout();
   startCamera();
-  activeCamera = orthoCamera;   // ★ カメラをオーバーレイ用に戻す
+  activeCamera = orthoCamera;
 }
 videoBtn.onclick = () => {
-  isPoseRotating3D = false;   // ★ 3D 回転状態をリセット
-  controls.reset();   // ★ OrbitControls を初期化
+  isPoseRotating3D = false;
+  controls.reset();
   gridHelper.visible = false;
   axesHelper.visible = false;
-  footspeedmax = 0;
+  persons.forEach(p => p.reset());
 
-  updateLayout();   // ★ small-video を解除
-  startVideoFile();   // ★ 動画モードに戻す
-  activeCamera = orthoCamera;   // ★ カメラをオーバーレイ用に戻す
+  updateLayout();
+  startVideoFile();
+  activeCamera = orthoCamera;
 };
 
 playPauseBtn.onclick = () => {
-  if (  currentMode == "video") {
+  if (currentMode == "video") {
     if (video.paused) {
       video.play();
       playPauseBtn.textContent = "⏸";
@@ -696,8 +722,14 @@ seekBar.oninput = () => {
   }
 };
 speedBar.oninput = () => {
+  if (mediaRecorder && mediaRecorder.state === "recording") {
+    setStatus("録画中は再生速度の変更は無視されます");
+    return;
+  }
   const rate = parseFloat(speedBar.value);
-  video.playbackRate = rate;
+  if (video) {
+    video.playbackRate = rate;
+  }
   speedLabel.textContent = rate.toFixed(1) + "x";
 };
 
@@ -739,7 +771,7 @@ async function main() {
   setStatus("Loading MediaPipe libs.. (初回は時間がかかります)");
   await initPose(currentNumPoses);
   setStatus("Select Movie file...");
-  
+
   // startVideoFile();  // またはカメラ起動部分
 
   // 最初のフレーム処理が始まるまで少し待ってから消す（任意）
