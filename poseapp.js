@@ -63,7 +63,7 @@ const connections = [
   [24, 26], [26, 28], [28, 30], [30, 32]
 ];
 
-const positionsArray = new Float32Array(6 * connections.length);  // ライン数 × 2点 × 3次元
+const positionsArray = new Float32Array(connections.length * 6);  // ライン数 × 2点 × 3次元
 
 function setStatus(msg) {
   if (statusElement) {
@@ -327,74 +327,29 @@ function initThree() {
    MediaPipe 初期化
 ------------------------------ */
 async function initPose(numPoses = 1) {
-  setStatus(`Initializing MediaPipe with ${numPoses} poses...`);
-  try {
-    poseLandmarker = await PoseLandmarker.create({
-      baseOptions: {
-        modelAssetPath: 'https://storage.googleapis.com/tfjs-models/tfjs/wasm/v1/2/gru.json',
-        delegate: 'cpu',
-      },
-      runtimeOptions: {
-        modelType: 'full',
-        numPoses: numPoses,
-      },
-    });
-    setStatus(`MediaPipe initialized for ${numPoses} poses`);
-    currentNumPoses = numPoses;
-    // Initialize arrays for multiple poses
-    poseData = [];
-    for (let i = 0; i < numPoses; i++) {
-      poseData.push({
-        filteredLm: Array(33).fill(null),
-        worldLm: null,
-        leftFoot: null,
-        rightFoot: null,
-        lastLeftPos: null,
-        lastRightPos: null
-      });
-    }
-    return poseLandmarker;
-  } catch (error) {
-    console.error('Error initializing pose landmarker:', error);
-    throw error;
-  }
-}
-
-async function main() {
-  setStatus("Initialise 3D Three.js...");
-  initThree();  // これが速いので最初に
-  setStatus("Loading MediaPipe libs.. (初回は時間がかかります)");
-  await initPose(currentNumPoses);
-  setStatus("Select Movie file...");
+  const vision = await FilesetResolver.forVisionTasks(
+    //"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm"
+  );
   
-  // startVideoFile();  // またはカメラ起動部分
-
-  // 最初のフレーム処理が始まるまで少し待ってから消す（任意）
-  /*setTimeout(() => {
-    if (statusElement) {
-      statusElement.style.display = 'none';  // または statusElement.remove();
-    }
-  }, 1500);  // 1.5秒後くらいに消す（調整可）*/
-
-  renderLoop();
+  var modelurl = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task"
+  if (numPoses==1){
+    modelurl = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task"
+    // modelurl = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task"
+  } else {
+    modelurl = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task"
+    console.log(`numPoses: ${numPoses}`);
+  }
+  poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath: modelurl,
+      delegate: "GPU",
+    },
+    runningMode: "VIDEO",
+    numPoses: numPoses
+  })
+  startVideoFile();
 }
-
-// Initialize pose data array
-poseData = [];
-for (let i = 0; i < currentNumPoses; i++) {
-  poseData.push({
-    filteredLm: Array(33).fill(null),
-    worldLm: null,
-    leftFoot: null,
-    rightFoot: null,
-    lastLeftPos: null,
-    lastRightPos: null,
-    leftFootPos: new THREE.Vector3(),
-    rightFootPos: new THREE.Vector3()
-  });
-}
-
-main();
 
 /* -----------------------------
    動画ファイルモード
@@ -521,18 +476,8 @@ function renderLoop(timestamp) {
     }
     const now = performance.now();
     const result = poseLandmarker.detectForVideo(video, now);
-    if (result.landmarks && result.landmarks.length > 0) {
-      // Initialize or reset pose data for all detected poses
-      for (let i = 0; i < Math.min(result.landmarks.length, currentNumPoses); i++) {
-        poseData[i].filteredLm = Array(33).fill(null);
-        poseData[i].worldLm = result.worldLandmarks?.[i] ?? null;
-        poseData[i].leftFoot = null;
-        poseData[i].rightFoot = null;
-        poseData[i].lastLeftPos = null;
-        poseData[i].lastRightPos = null;
-      }
-
-      const worldLm = result.worldLandmarks?.[0] ?? null;
+    if (result.landmarks && result.landmarks[0]) {
+      const worldLm = result.worldLandmarks?.[0] ?? null;  // or result.worldLandmarks?.[0]
       if (isPoseRotating3D && worldLm) {
         // Use worldLm for 3D / filteredLm2 etc.
         updatePoseLandmarks(worldLm);
@@ -545,49 +490,29 @@ function renderLoop(timestamp) {
         // console.log("not worldlandmarks:", result.worldlandmarks);
         updatePoseLandmarks(result.landmarks[0]);  // fallback
       }
- 
-      // Process each detected pose up to currentNumPoses
-      for (let i = 0; i < Math.min(result.landmarks.length, currentNumPoses); i++) {
-        const poseIdx = i;
-        const lm = result.landmarks[i];
-        const worldLm = result.worldLandmarks?.[i] ?? null;
+      
+      connections.forEach((pair, i) => {
+        const [a, b] = pair;
+        const lmA = filteredLm2[a];
+        const lmB = filteredLm2[b];
 
-        // Update filtered landmarks for this pose
-        if (worldLm) {
-          updatePoseLandmarks(worldLm, poseIdx);
-          poseData[poseIdx].worldLm = worldLm;
-        } else {
-          updatePoseLandmarks(lm, poseIdx);
+        const baseIdx = i * 6;
+        if (isPoseRotating3D) {
+          positionsArray[baseIdx + 0] = (lmA.x - CENTER) * SCALE;
+          positionsArray[baseIdx + 1] = (-lmA.y + CENTER) * SCALE;
+          positionsArray[baseIdx + 2] = -lmA.z * SCALE;
+          positionsArray[baseIdx + 3] = (lmB.x - CENTER) * SCALE;
+          positionsArray[baseIdx + 4] = (-lmB.y  + CENTER) * SCALE;;
+          positionsArray[baseIdx + 5] = -lmB.z * SCALE;
+        }else{
+          positionsArray[baseIdx + 0] = lmA.x * displayW;
+          positionsArray[baseIdx + 1] = (1-lmA.y) * displayH + ofseth;
+          positionsArray[baseIdx + 2] = 0;
+          positionsArray[baseIdx + 3] = lmB.x * displayW;
+          positionsArray[baseIdx + 4] = (1-lmB.y) * displayH + ofseth;
+          positionsArray[baseIdx + 5] = 0;
         }
-
-        // Extract feet positions
-        poseData[poseIdx].leftFoot = filteredLm2[31];
-        poseData[poseIdx].rightFoot = filteredLm2[32];
-
-        // Update positions array for this pose
-        connections.forEach((pair, i) => {
-          const [a, b] = pair;
-          const lmA = filteredLm2[a];
-          const lmB = filteredLm2[b];
-
-          const baseIdx = i * 6 * currentNumPoses + poseIdx * 6;
-          if (isPoseRotating3D) {
-            positionsArray[baseIdx + 0] = (lmA.x - CENTER) * SCALE;
-            positionsArray[baseIdx + 1] = (-lmA.y + CENTER) * SCALE;
-            positionsArray[baseIdx + 2] = -lmA.z * SCALE;
-            positionsArray[baseIdx + 3] = (lmB.x - CENTER) * SCALE;
-            positionsArray[baseIdx + 4] = (-lmB.y + CENTER) * SCALE;
-            positionsArray[baseIdx + 5] = -lmB.z * SCALE;
-          } else {
-            positionsArray[baseIdx + 0] = lmA.x * displayW;
-            positionsArray[baseIdx + 1] = (1-lmA.y) * displayH + ofseth;
-            positionsArray[baseIdx + 2] = 0;
-            positionsArray[baseIdx + 3] = lmB.x * displayW;
-            positionsArray[baseIdx + 4] = (1-lmB.y) * displayH + ofseth;
-            positionsArray[baseIdx + 5] = 0;
-          }
-        });
-      }
+      });
 
       // 最後に一括更新
       skeletonLines.forEach((line, i) => {
@@ -619,39 +544,42 @@ function renderLoop(timestamp) {
         -rightFoot.z
       );
 
-      /* Foot Speed - Calculate for all detected poses */
+      /* Foot Speed */
       const rawTime = video.currentTime;
-      const { y1, y2 } = lowpass2s(t1, t2, rawTime, 0.03);
+      const { y1, y2 } = lowpass2s(t1, t2, rawTime, 0.03) // 二次遅れフィルタ
       t1 = y1; t2 = y2;
 
-      if (prevT != null) {
-        if (y2 < prevT - 0.1) {
-          dt = 0;
-          prevT = y2;
-        } else {
+      if (prevT != null) {        // 🔥 巻き戻り（ループ再生）を検出
+        if (y2 < prevT - 0.1) { // 0.1秒以上戻ったら「ループした」と判断
+          dt = 0;          // 距離計算をリセット
+          prevT = y2;      // 新しいスタート地点に更新
+        } else {          // 通常の dt 計算
           dt = y2 - prevT;
           prevT = y2;
         }
       } else {
         prevT = y2;
       }
-
-      // Track speed for all detected poses
-      let maxSpeed = 0;
-      for (let i = 0; i < Math.min(poseData.length, currentNumPoses); i++) {
-        const pose = poseData[i];
-        if (pose.lastLeftPos && ((dt ?? 0) > 1e-3)) {
-          const speedvalprev = speedVal;
-          const speed = Math.max(
-            pose.leftFootPos.distanceTo(pose.lastLeftPos),
-            pose.rightFootPos.distanceTo(pose.lastRightPos)
-          ) / dt;
-          speedVal = ema(speedvalprev, speed, 0.5);
-          maxSpeed = Math.max(maxSpeed, speedVal);
-        }
+      if (lastLeftPos && ((dt ?? 0) > 1e-3)) {
+        const speedvalprev = speedVal;
+        speedVal = Math.max(leftPos.distanceTo(lastLeftPos),rightPos.distanceTo(lastRightPos)) / dt;
+        speedVal =  ema(speedvalprev, speedVal, 0.5)
       }
-      speedVal = maxSpeed;
+      // console.log("dt:", dt, "dte:", y1,y2);
 
+      /* const {y1,y2} = lowpass2s(dtprev1, dtprev2, video.currentTime) ;
+      const dt = dtprev2 - y2 ;
+      dtprev1 = y1; dtprev2 = y2;
+      if (dtprev2<1e-3 || video.currentTime >= dtprev2){
+        if (lastLeftPos && ((dt ?? 0) > 1e-3)) {
+          // const dt = (now - lastTime) / 1000;
+          speedVal = Math.max(leftPos.distanceTo(lastLeftPos),rightPos.distanceTo(lastRightPos)) / dt;
+        }
+      } else {
+        dtprev1 = 0;dtprev2= 0;
+      }
+      lastTime = video.currentTime;  //now;
+        */
       if (worldLm && video.currentTime > 0.05) {
         footspeedmax = Math.max(footspeedmax,speedVal)
       }
@@ -700,10 +628,10 @@ function renderLoop(timestamp) {
 
       debug.textContent =
         `FPS: ${Math.round(1000 / (performance.now() - now))}\n` +
-        `Detected poses: ${result.landmarks ? result.landmarks.length : 0}/${currentNumPoses}\n` +
         `Foot speed: ${speedVal.toFixed(2)} max: ${footspeedmax.toFixed(2)} m/s\n` +
         `Speed: ${video.playbackRate.toFixed(1)}x\n` +
         `Time: ${video.currentTime.toFixed(2)} / ${video.duration.toFixed(2)}\n` +
+        //`container: ${container.className}\n` +
         `vide WH ofs: ${displayW.toFixed(1)} ${displayH.toFixed(1)} ${ofseth.toFixed(1)}`;
     }
     renderer.render(scene, activeCamera);
@@ -822,21 +750,6 @@ async function main() {
   }, 1500);  // 1.5秒後くらいに消す（調整可）*/
 
   renderLoop();
-}
-
-// Initialize pose data array
-poseData = [];
-for (let i = 0; i < currentNumPoses; i++) {
-  poseData.push({
-    filteredLm: Array(33).fill(null),
-    worldLm: null,
-    leftFoot: null,
-    rightFoot: null,
-    lastLeftPos: null,
-    lastRightPos: null,
-    leftFootPos: new THREE.Vector3(),
-    rightFootPos: new THREE.Vector3()
-  });
 }
 
 main();
