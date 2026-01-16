@@ -107,7 +107,7 @@
       opacity: 0.4;
     }
 
-    #ui button, #ui input[type="file"] {
+    #ui button, #ui input[type="file"], #ui select {
       background: rgba(255,255,255,0.2);
       color: #fff;
       border: 1px solid rgba(255,255,255,0.4);
@@ -146,6 +146,12 @@
       <input id="fileInput" type="file" accept="video/*" />
       <button id="cameraBtn">Camera</button>
       <button id="videoBtn">Reset</button>
+      <label for="numPosesSelect">Persons:</label>
+      <select id="numPosesSelect">
+        <option value="1" selected>1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+      </select>
     </div>
 
     <div id="debug"></div>
