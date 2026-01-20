@@ -139,7 +139,7 @@ class Person {
     }
   }
 
-  update(landmarks, worldLandmarks, is3D, displayW, displayH, ofseth, center, scale, currentTime) {
+  update(landmarks, worldLandmarks, is3D, displayW, displayH, ofseth, center, scale, currentTime, xofset = 0.5) {
     this.setVisible(true);
 
     const playbackRate = video.playbackRate;
@@ -147,6 +147,7 @@ class Person {
     const tau = baseTau / playbackRate;
     const dt_mp = 1 / 30;
     let alpha = dt_mp / tau;
+    const xshift = currentNumPoses > 1 ? (xofset - 0.5) * 500 : 0;
     if (alpha > 1) alpha = 1;
 
     // ポーズデータのフィルタリング
@@ -167,10 +168,10 @@ class Person {
 
       const baseIdx = i * 6;
       if (is3D) {
-        this.positionsArray[baseIdx + 0] = (lmA.x - center) * scale;
+        this.positionsArray[baseIdx + 0] = (lmA.x - center) * scale + xshift;
         this.positionsArray[baseIdx + 1] = (-lmA.y + center) * scale;
         this.positionsArray[baseIdx + 2] = -lmA.z * scale;
-        this.positionsArray[baseIdx + 3] = (lmB.x - center) * scale;
+        this.positionsArray[baseIdx + 3] = (lmB.x - center) * scale + xshift;
         this.positionsArray[baseIdx + 4] = (-lmB.y + center) * scale;
         this.positionsArray[baseIdx + 5] = -lmB.z * scale;
       } else {
@@ -227,7 +228,9 @@ class Person {
       let trailLeft, trailRight;
       if (is3D) {
         trailLeft = leftPos.clone().multiplyScalar(scale);
+        trailLeft.x += xshift;
         trailRight = rightPos.clone().multiplyScalar(scale);
+        trailRight.x += xshift;
       } else {
         trailLeft = new THREE.Vector3(leftFoot.x * displayW, ofseth + (1 - leftFoot.y) * displayH, 0);
         trailRight = new THREE.Vector3(rightFoot.x * displayW, ofseth + (1 - rightFoot.y) * displayH, 0);
@@ -452,7 +455,7 @@ function initThree() {
   }
 
   // === 3D 用の地平面と XYZ 軸 ===
-  const grid = new THREE.GridHelper(400, 20, 0x444444, 0x888888);
+  const grid = new THREE.GridHelper(1000, 20, 0x444444, 0x888888);
   grid.visible = false; // 初期状態は非表示（2D のため）
   scene.add(grid);
 
@@ -522,6 +525,8 @@ function startVideoFile() {
       video.play().then(updateLayout);
       persons.forEach(p => p.reset());
       playPauseBtn.textContent = "⏸";
+      speedBar.value = 1.0;
+      video.playbackRate = 1.0;
     };
   };
 }
@@ -531,6 +536,7 @@ function startVideoFile() {
 ------------------------------ */
 let stream = null;
 let mediaRecorder;
+let recordedChunks = [];
 async function startCamera() {
   currentMode = "camera";
   video.src = "";
@@ -544,23 +550,50 @@ async function startCamera() {
     audio: false
   });
 
+  renderer.setSize(video.videoWidth, video.videoHeight, false);
+  setupCameraForVideo();
+  activeCamera = orthoCamera;
+  persons.forEach(p => p.reset());
+
+  isPoseRotating3D = false;
+  controls.reset();
+
   stream = newStream; // グローバル変数に保存
   video.srcObject = stream;
   video.onloadedmetadata = () => {
     video.play().then(updateLayout);
   };
-  playPauseBtn.textContent = "🔴";
+  if (stream) {
+    playPauseBtn.textContent = "🔴";
+  }
 }
-/* 録画停止 */
+/* 録画開始停止 */
 function startRecording() {
   if (!stream) {
     setStatus("録画はカメラモードでのみ可能です");
     return;
   }
+
+  const types = [
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
+    'video/webm',
+    'video/mp4' // Safariなどで有効な場合がある
+  ];
+
   recordedChunks = [];
-  mediaRecorder = new MediaRecorder(stream, {
-    mimeType: "video/webm;codecs=vp9"
-  });
+  let selectedType = '';
+  for (const type of types) {
+    if (MediaRecorder.isTypeSupported(type)) {
+      selectedType = type;
+      break;
+    }
+  }
+  if (selectedType) {
+    mediaRecorder = new MediaRecorder(stream, { mimeType: selectedType });
+  } else {
+    console.error("対応している形式が見つかりません");
+  }
 
   mediaRecorder.ondataavailable = (e) => {
     if (e.data.size > 0) recordedChunks.push(e.data);
@@ -627,13 +660,15 @@ function renderLoop(timestamp) {
     if (result.landmarks && result.landmarks.length > 0) {
       let debugText = `FPS: ${Math.round(1000 / (performance.now() - now))}\n`;
 
-      const SCALE = isPoseRotating3D ? 100 : 200;
-      const CENTER = isPoseRotating3D ? 0.0 : 0.5;
-
       result.landmarks.forEach((landmarks, idx) => {
         if (idx >= MAX_PERSONS) return;
         const worldLandmarks = result.worldLandmarks?.[idx] ?? null;
         const person = persons[idx];
+
+        const SCALE = worldLandmarks ? 100 : 200;
+        const CENTER = worldLandmarks ? 0.0 : 0.5;
+        const xofset = currentNumPoses > 1 ? landmarks[0].x : 0.5;
+        // console.log(`xofset: ${xofset} ${currentNumPoses}`);
 
         person.update(
           landmarks,
@@ -644,7 +679,8 @@ function renderLoop(timestamp) {
           ofseth,
           CENTER,
           SCALE,
-          video.currentTime
+          video.currentTime,
+          xofset
         );
 
         if (idx === 0) {
@@ -655,13 +691,13 @@ function renderLoop(timestamp) {
             const miny = Math.min(-leftFoot.y, -rightFoot.y);
             const gridy = (miny + CENTER) * SCALE;
             gridHelper.position.set(0, gridy, 0);
-            if (endcontrol &&  typeof camyfromgrid === 'number') {
-              perspectiveCamera.position.y = Math.min(1500,camyfromgrid + gridy);
+            if (endcontrol && typeof camyfromgrid === 'number') {
+              perspectiveCamera.position.y = Math.min(1500, camyfromgrid + gridy);
             }
           }
         }
 
-        debugText += `[P${idx}] Speed: ${person.speedVal.toFixed(2)} max: ${person.footSpeedMax.toFixed(2)} m/s\n`;
+        debugText += `[P${idx}]Speed: ${person.speedVal.toFixed(2)} max: ${person.footSpeedMax.toFixed(2)} m / s\n`;
       });
 
       debugText += `Speed: ${video.playbackRate.toFixed(1)}x\n` +
@@ -716,6 +752,7 @@ playPauseBtn.onclick = () => {
     }
   }
 };
+
 // 動画の再生位置に合わせてシークバーを更新
 video.ontimeupdate = () => {
   if (!video.paused) {
@@ -725,10 +762,10 @@ video.ontimeupdate = () => {
 
 // 停止中はスライダーで位置変更
 seekBar.oninput = () => {
-  if (video.paused) {
-    const t = (seekBar.value / 100) * video.duration;
-    video.currentTime = t;
-  }
+  //if (video.paused) {
+  const t = (seekBar.value / 100) * video.duration;
+  video.currentTime = t;
+  //}
 };
 speedBar.oninput = () => {
   if (mediaRecorder && mediaRecorder.state === "recording") {
@@ -755,7 +792,7 @@ if (numPosesSelect) {
       poseLandmarker = null;
     }
 
-    setStatus(`検出人数を ${newNumPoses} に変更中... 少々お待ちください`);
+    setStatus(`検出人数を ${newNumPoses} に変更中...少々お待ちください`);
     // 再作成
     await initPose(newNumPoses);
 
