@@ -37,6 +37,15 @@ let activeCamera;
 let isPoseRotating3D = false;
 let currentMode = "video";
 
+// パフォーマンス最適化用
+let isIOS = false;
+let isMobile = false;
+let cachedDisplayW = 0;
+let cachedDisplayH = 0;
+let cachedOfseth = 0;
+let lastDebugUpdate = 0;
+const DEBUG_UPDATE_INTERVAL = 200; // デバッグ表示は200msごとに更新
+
 const connections = [
   [7, 0], [0, 8],
   [11, 13], [13, 15], [15, 19],
@@ -56,6 +65,11 @@ class Person {
     this.filteredLm1 = null;
     this.filteredLm2 = null;
     this.demalm = null;
+
+    // 世界座標（速度計算用）
+    this.worldFilteredLm1 = null;
+    this.worldFilteredLm2 = null;
+    this.worldDemalm = null;
 
     // 足の速度計用
     this.lastLeftPos = null;
@@ -120,22 +134,23 @@ class Person {
     this.scene.add(this.rightTrailLine);
   }
 
-  updatePoseLandmarks(lm, alpha) {
-    if (!this.filteredLm1) {
-      this.filteredLm1 = lm.map(p => ({ x: p.x, y: p.y, z: p.z }));
-      this.filteredLm2 = lm.map(p => ({ x: p.x, y: p.y, z: p.z }));
-      this.demalm = lm.map(p => ({ x: p.x, y: p.y, z: p.z }));
+  updatePoseLandmarks(lm, alpha, prefix = "") {
+    const f1 = prefix ? prefix + "FilteredLm1" : "filteredLm1";
+    const f2 = prefix ? prefix + "FilteredLm2" : "filteredLm2";
+    const dm = prefix ? prefix + "Demalm" : "demalm";
+
+    if (!this[f1]) {
+      this[f1] = lm.map(p => ({ x: p.x, y: p.y, z: p.z }));
+      this[f2] = lm.map(p => ({ x: p.x, y: p.y, z: p.z }));
+      this[dm] = lm.map(p => ({ x: p.x, y: p.y, z: p.z }));
       return;
     }
 
     for (let i = 0; i < lm.length; i++) {
-      //const { y1, y2 } = lowpass2(this.filteredLm1[i], this.filteredLm2[i], lm[i], alpha);
-      //this.filteredLm1[i] = y1;
-      //this.filteredLm2[i] = y2;
-      const { ema1, ema2, dema } = demaVec(this.filteredLm1[i], this.filteredLm2[i], lm[i], alpha);
-      this.filteredLm1[i] = ema1;
-      this.filteredLm2[i] = ema2;
-      this.demalm[i] = dema;
+      const { ema1, ema2, dema } = demaVec(this[f1][i], this[f2][i], lm[i], alpha);
+      this[f1][i] = ema1;
+      this[f2][i] = ema2;
+      this[dm][i] = dema;
     }
   }
 
@@ -150,11 +165,18 @@ class Person {
     const xshift = currentNumPoses > 1 ? (xofset - 0.5) * 500 : 0;
     if (alpha > 1) alpha = 1;
 
-    // ポーズデータのフィルタリング
+    // 表示用データのフィルタリング
     if (is3D && worldLandmarks) {
       this.updatePoseLandmarks(worldLandmarks, alpha);
+      this.worldFilteredLm1 = this.filteredLm1;
+      this.worldFilteredLm2 = this.filteredLm2;
+      this.worldDemalm = this.demalm;
     } else {
       this.updatePoseLandmarks(landmarks, alpha);
+      // 速度計算用（世界座標）のフィルタリング - 常に実行
+      if (worldLandmarks) {
+        this.updatePoseLandmarks(worldLandmarks, alpha, "world");
+      }
     }
 
     if (!this.demalm) return;
@@ -191,12 +213,14 @@ class Person {
       line.geometry.attributes.position.needsUpdate = true;
     });
 
-    // 足の速度計算
-    const leftFoot = this.demalm[31];
-    const rightFoot = this.demalm[32];
-    if (leftFoot && rightFoot) {
-      const leftPos = new THREE.Vector3((leftFoot.x - center), (-leftFoot.y + center), -leftFoot.z);
-      const rightPos = new THREE.Vector3((rightFoot.x - center), (-rightFoot.y + center), -rightFoot.z);
+    // 足の速度計算 (常に世界座標を使用)
+    if (this.worldDemalm) {
+      const leftFoot = this.worldDemalm[31];
+      const rightFoot = this.worldDemalm[32];
+      const WORLD_CENTER = 0.0; // 世界座標の中心は 0
+
+      const leftPos = new THREE.Vector3((leftFoot.x - WORLD_CENTER), (-leftFoot.y + WORLD_CENTER), -leftFoot.z);
+      const rightPos = new THREE.Vector3((rightFoot.x - WORLD_CENTER), (-rightFoot.y + WORLD_CENTER), -rightFoot.z);
 
       const { y1, y2 } = lowpass2s(this.t1, this.t2, currentTime, 0.03);
       this.t1 = y1; this.t2 = y2;
@@ -232,8 +256,8 @@ class Person {
         trailRight = rightPos.clone().multiplyScalar(scale);
         trailRight.x += xshift;
       } else {
-        trailLeft = new THREE.Vector3(leftFoot.x * displayW, ofseth + (1 - leftFoot.y) * displayH, 0);
-        trailRight = new THREE.Vector3(rightFoot.x * displayW, ofseth + (1 - rightFoot.y) * displayH, 0);
+        trailLeft = new THREE.Vector3(this.demalm[31].x * displayW, ofseth + (1 - this.demalm[31].y) * displayH, 0);
+        trailRight = new THREE.Vector3(this.demalm[32].x * displayW, ofseth + (1 - this.demalm[32].y) * displayH, 0);
       }
 
       this.leftTrailPoints.push(trailLeft);
@@ -263,6 +287,9 @@ class Person {
     this.filteredLm1 = null;
     this.filteredLm2 = null;
     this.demalm = null;
+    this.worldFilteredLm1 = null;
+    this.worldFilteredLm2 = null;
+    this.worldDemalm = null;
     this.lastLeftPos = null;
     this.lastRightPos = null;
     this.t1 = null;
@@ -278,7 +305,9 @@ class Person {
     this.setVisible(false);
   }
 }
-
+/* 
+   utility functions 
+*/
 function setStatus(msg) {
   if (statusElement) {
     statusElement.textContent = msg;
@@ -400,16 +429,61 @@ function updateLayout() {
   });
 }
 
-window.addEventListener("resize", updateLayout);
+window.addEventListener("resize", () => {
+  updateLayout();
+  updateDisplayCache();
+});
+
+// ビデオのメタデータ読み込み時にもキャッシュ更新
+video.addEventListener('loadedmetadata', updateDisplayCache);
 
 /* -----------------------------
    Three.js 初期化
 ------------------------------ */
 let camyfromgrid;
 let endcontrol = true;
+
+/* -----------------------------
+   デバイス検出
+------------------------------ */
+function detectDevice() {
+  isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  isMobile = /Android|iPhone|iPad|iPod/.test(navigator.userAgent);
+
+  console.log(`Device: ${isMobile ? 'Mobile' : 'Desktop'}, iOS: ${isIOS}`);
+}
+
+/* -----------------------------
+   表示サイズのキャッシュ更新
+------------------------------ */
+function updateDisplayCache() {
+  const videoRect = video.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  cachedOfseth = videoRect.top - containerRect.top;
+
+  if (isIOS) {
+    cachedDisplayW = videoRect.width;
+    cachedDisplayH = videoRect.height;
+  } else {
+    cachedDisplayW = video.videoWidth;
+    cachedDisplayH = video.videoHeight;
+  }
+}
+
+/* -----------------------------
+   Three.js 初期化
+------------------------------ */
 function initThree() {
-  renderer = new THREE.WebGLRenderer({ canvas, alpha: true });
-  //renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer = new THREE.WebGLRenderer({
+    canvas,
+    alpha: true,
+    antialias: !isMobile, // モバイルではアンチエイリアスを無効化
+    powerPreference: isMobile ? 'low-power' : 'high-performance'
+  });
+
+  // モバイルではピクセル比を制限してパフォーマンス向上
+  const pixelRatio = isMobile ? Math.min(window.devicePixelRatio, 1.5) : window.devicePixelRatio;
+  renderer.setPixelRatio(pixelRatio);
 
   scene = new THREE.Scene();
   perspectiveCamera = new THREE.PerspectiveCamera(
@@ -472,6 +546,7 @@ function initThree() {
    MediaPipe 初期化
 ------------------------------ */
 async function initPose(numPoses = 1) {
+  currentNumPoses = numPoses;
   const vision = await FilesetResolver.forVisionTasks(
     //"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm"
@@ -493,7 +568,6 @@ async function initPose(numPoses = 1) {
     runningMode: "VIDEO",
     numPoses: numPoses
   })
-  startVideoFile();
 }
 
 /* -----------------------------
@@ -507,11 +581,25 @@ function startVideoFile() {
     video.srcObject = null;
   }
 
+  // もし既に video.src がある場合は再生を試みる（Resetボタン対応）
+  if (video.src) {
+    video.play().then(updateLayout).catch(e => console.error("Auto-play failed:", e));
+    persons.forEach(p => p.reset());
+    playPauseBtn.textContent = "⏸";
+  }
+
   fileInput.onchange = () => {
     setStatus("Loading Movie file...");
     const file = fileInput.files[0];
     if (!file) return;
-    // ★ 3D 回転状態をリセット
+
+    // カメラが動いていたら停止
+    if (video.srcObject) {
+      video.srcObject.getTracks().forEach(t => t.stop());
+      video.srcObject = null;
+    }
+
+    currentMode = "video";
     isPoseRotating3D = false;
     controls.reset();
     updateLayout();
@@ -522,7 +610,8 @@ function startVideoFile() {
       renderer.setSize(video.videoWidth, video.videoHeight, false);
       setupCameraForVideo();
       activeCamera = orthoCamera;
-      video.play().then(updateLayout);
+      updateDisplayCache(); // キャッシュを更新
+      video.play().then(updateLayout).catch(e => console.error("Play error:", e));
       persons.forEach(p => p.reset());
       playPauseBtn.textContent = "⏸";
       speedBar.value = 1.0;
@@ -550,9 +639,6 @@ async function startCamera() {
     audio: false
   });
 
-  renderer.setSize(video.videoWidth, video.videoHeight, false);
-  setupCameraForVideo();
-  activeCamera = orthoCamera;
   persons.forEach(p => p.reset());
 
   isPoseRotating3D = false;
@@ -561,6 +647,10 @@ async function startCamera() {
   stream = newStream; // グローバル変数に保存
   video.srcObject = stream;
   video.onloadedmetadata = () => {
+    renderer.setSize(video.videoWidth, video.videoHeight, false);
+    setupCameraForVideo();
+    activeCamera = orthoCamera;
+    updateDisplayCache(); // キャッシュを更新
     video.play().then(updateLayout);
   };
   if (stream) {
@@ -632,19 +722,10 @@ function stopRecording() {
 function renderLoop(timestamp) {
   controls.update();
 
-  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
-  const videoRect = video.getBoundingClientRect();
-  const containerRect = container.getBoundingClientRect();
-  const ofseth = videoRect.top - containerRect.top;
-  let displayW, displayH;
-
-  if (isIOS) {
-    displayW = videoRect.width;
-    displayH = videoRect.height;
-  } else {
-    displayW = video.videoWidth;
-    displayH = video.videoHeight;
-  }
+  // キャッシュされた表示サイズを使用（パフォーマンス向上）
+  const displayW = cachedDisplayW || video.videoWidth;
+  const displayH = cachedDisplayH || video.videoHeight;
+  const ofseth = cachedOfseth;
 
   if (poseLandmarker && video.readyState >= 2) {
     if (statusElement && statusElement.style.display != 'none') {
@@ -658,7 +739,15 @@ function renderLoop(timestamp) {
     persons.forEach(p => p.setVisible(false));
 
     if (result.landmarks && result.landmarks.length > 0) {
-      let debugText = `FPS: ${Math.round(1000 / (performance.now() - now))}\n`;
+      // デバッグ表示の更新頻度を制限（パフォーマンス向上）
+      const shouldUpdateDebug = (timestamp - lastDebugUpdate) > DEBUG_UPDATE_INTERVAL;
+      let debugText = '';
+      if (shouldUpdateDebug) {
+        lastDebugUpdate = timestamp;
+        const inferenceTime = performance.now() - now;
+        const effectiveFPS = Math.round(1000 / inferenceTime);
+        debugText = `FPS: ${effectiveFPS}\n`;
+      }
 
       result.landmarks.forEach((landmarks, idx) => {
         if (idx >= MAX_PERSONS) return;
@@ -697,16 +786,22 @@ function renderLoop(timestamp) {
           }
         }
 
-        debugText += `[P${idx}]Speed: ${person.speedVal.toFixed(2)} max: ${person.footSpeedMax.toFixed(2)} m / s\n`;
+        if (shouldUpdateDebug) {
+          debugText += `[P${idx}]Speed: ${person.speedVal.toFixed(2)} max: ${person.footSpeedMax.toFixed(2)} m / s\n`;
+        }
       });
 
-      debugText += `Speed: ${video.playbackRate.toFixed(1)}x\n` +
-        `Time: ${video.currentTime.toFixed(2)} / ${video.duration.toFixed(2)}\n` +
-        `WH ofs: ${displayW.toFixed(1)} ${displayH.toFixed(1)} ${ofseth.toFixed(1)}`;
-      debug.textContent = debugText;
+      if (shouldUpdateDebug) {
+        debugText += `Speed: ${video.playbackRate.toFixed(1)}x\n` +
+          `Time: ${video.currentTime.toFixed(2)} / ${video.duration.toFixed(2)}\n` +
+          `WH ofs: ${displayW.toFixed(1)} ${displayH.toFixed(1)} ${ofseth.toFixed(1)}`;
+        debug.textContent = debugText;
+      }
     }
-    renderer.render(scene, activeCamera);
   }
+
+  // レンダリングは毎フレーム実行（滑らかな表示のため）
+  renderer.render(scene, activeCamera);
   requestAnimationFrame(renderLoop);
 }
 
@@ -714,11 +809,18 @@ function renderLoop(timestamp) {
    UI
 ------------------------------ */
 cameraBtn.onclick = () => {
+  if (video.srcObject) return; // 既にカメラ起動中なら何もしない
+
   isPoseRotating3D = false;
   controls.reset();
   gridHelper.visible = false;
   axesHelper.visible = false;
   persons.forEach(p => p.reset());
+
+  // ビデオファイルを停止
+  video.pause();
+  video.src = "";
+
   updateLayout();
   startCamera();
   activeCamera = orthoCamera;
@@ -812,20 +914,22 @@ if (numPosesSelect) {
    起動
 ------------------------------ */
 async function main() {
+  setStatus("Initialise device detection...");
+  detectDevice(); // デバイス検出を最初に実行
+
   setStatus("Initialise 3D Three.js...");
   initThree();  // これが速いので最初に
+
   setStatus("Loading MediaPipe libs.. (初回は時間がかかります)");
   await initPose(currentNumPoses);
-  setStatus("Select Movie file...");
 
-  // startVideoFile();  // またはカメラ起動部分
-
-  // 最初のフレーム処理が始まるまで少し待ってから消す（任意）
-  /*setTimeout(() => {
-    if (statusElement) {
-      statusElement.style.display = 'none';  // または statusElement.remove();
-    }
-  }, 1500);  // 1.5秒後くらいに消す（調整可）*/
+  // 初期化完了時に既にカメラが選ばれていなければ、ビデオファイルモードの待機状態にする
+  if (currentMode !== "camera") {
+    startVideoFile();
+    setStatus("Select Movie file...");
+  } else {
+    setStatus("Camera Ready");
+  }
 
   renderLoop();
 }
