@@ -434,6 +434,13 @@ window.addEventListener("resize", () => {
   updateDisplayCache();
 });
 
+// ウィンドウサイズ変更時の処理
+window.addEventListener('resize', () => {
+  if (currentMode === "camera") {
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+});
+
 // ビデオのメタデータ読み込み時にもキャッシュ更新
 video.addEventListener('loadedmetadata', updateDisplayCache);
 
@@ -644,15 +651,23 @@ async function startCamera() {
   isPoseRotating3D = false;
   controls.reset();
 
-  stream = newStream; // グローバル変数に保存
+  stream = newStream;
   video.srcObject = stream;
+
+  // カメラモードで全画面表示にするための設定
+  video.style.width = "100%";
+  video.style.height = "100%";
+  video.style.objectFit = "cover";
+
   video.onloadedmetadata = () => {
-    renderer.setSize(video.videoWidth, video.videoHeight, false);
+    // レンダラーのサイズを画面全体に設定
+    renderer.setSize(window.innerWidth, window.innerHeight);
     setupCameraForVideo();
     activeCamera = orthoCamera;
-    updateDisplayCache(); // キャッシュを更新
+    updateDisplayCache();
     video.play().then(updateLayout);
   };
+
   if (stream) {
     playPauseBtn.textContent = "🔴";
   }
@@ -825,6 +840,7 @@ cameraBtn.onclick = () => {
   startCamera();
   activeCamera = orthoCamera;
 }
+
 videoBtn.onclick = () => {
   isPoseRotating3D = false;
   controls.reset();
