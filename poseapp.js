@@ -659,7 +659,7 @@ async function startCamera() {
   video.style.height = "100%";
   video.style.objectFit = "cover";
   if (!poseLandmarker) {
-    setStatus("Loading MediaPipe libs.. (初回は時間がかかります)");
+    setStatus("Loading MediaPipe libs..");
     await initPose(currentNumPoses);
   }
 
@@ -669,7 +669,10 @@ async function startCamera() {
     setupCameraForVideo();
     activeCamera = orthoCamera;
     updateDisplayCache();
-    video.play().then(updateLayout);
+    video.play().then(() => {
+      updateLayout()
+      renderLoop();
+    });
   };
 
   if (stream) {
