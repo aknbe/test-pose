@@ -44,7 +44,7 @@ let cachedDisplayW = 0;
 let cachedDisplayH = 0;
 let cachedOfseth = 0;
 let lastDebugUpdate = 0;
-const DEBUG_UPDATE_INTERVAL = 200; // デバッグ表示は200msごとに更新
+const DEBUG_UPDATE_INTERVAL = 100; // デバッグ表示は200msごとに更新
 
 const connections = [
   [7, 0], [0, 8],
@@ -658,6 +658,10 @@ async function startCamera() {
   video.style.width = "100%";
   video.style.height = "100%";
   video.style.objectFit = "cover";
+  if (!poseLandmarker) {
+    setStatus("Loading MediaPipe libs.. (初回は時間がかかります)");
+    await initPose(currentNumPoses);
+  }
 
   video.onloadedmetadata = () => {
     // レンダラーのサイズを画面全体に設定
