@@ -383,7 +383,7 @@ function demaVec(prevEma1, prevEma2, v, alpha = 0.2) {
 function setupCameraForVideo() {
   // iPhone Safari 判定
   //renderer.setSize(window.innerWidth, window.innerHeight);
-  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  //const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
   const videoRect = video.getBoundingClientRect();
   if (isIOS) {
     var w = videoRect.width;
@@ -658,22 +658,42 @@ async function startCamera() {
   video.style.width = "100%";
   video.style.height = "100%";
   video.style.objectFit = "cover";
+
+  // iOSデバイスの特殊な処理
+  //const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+
+  if (isIOS) {
+    // iOSではビデオのメタデータが遅れることがあるため、playイベントを待つ
+    video.addEventListener('play', () => {
+      video.addEventListener('loadedmetadata', () => {
+        // iOSではvideo.videoWidthが正しく取得できない場合があるため、getBoundingClientRectを使用
+        const videoRect = video.getBoundingClientRect();
+        renderer.setSize(videoRect.width, videoRect.height);
+        setupCameraForVideo();
+        activeCamera = orthoCamera;
+        updateDisplayCache();
+        updateLayout();
+        renderLoop();
+      });
+    });
+  } else {
+    // 通常のデバイス
+    video.onloadedmetadata = () => {
+      renderer.setSize(video.videoWidth, video.videoHeight);
+      setupCameraForVideo();
+      activeCamera = orthoCamera;
+      updateDisplayCache();
+      video.play().then(() => {
+        updateLayout();
+        renderLoop();
+      });
+    };
+  }
+
   if (!poseLandmarker) {
     setStatus("Loading MediaPipe libs..");
     await initPose(currentNumPoses);
   }
-
-  video.onloadedmetadata = () => {
-    // レンダラーのサイズを画面全体に設定
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    setupCameraForVideo();
-    activeCamera = orthoCamera;
-    updateDisplayCache();
-    video.play().then(() => {
-      updateLayout()
-      renderLoop();
-    });
-  };
 
   if (stream) {
     playPauseBtn.textContent = "🔴";
